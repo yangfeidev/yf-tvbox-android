@@ -46,6 +46,11 @@ import me.bsdnme.tvbox.vm.AppViewModel
  */
 class MainActivity : ComponentActivity() {
 
+    override fun onResume() {
+        super.onResume()
+        UpdateCenter.onResume(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         setTheme(me.bsdnme.tvbox.R.style.Theme_FeigeMedia)
         super.onCreate(savedInstanceState)
@@ -72,8 +77,8 @@ class MainActivity : ComponentActivity() {
                     UpdateCenter.silentCheck(applicationContext)
                 }
                 Box(Modifier.fillMaxSize()) {
-                    FeigeMediaApp(formFactor = formFactor)
-                    if (showBrand) StartupBrand()
+                    if (state.localLoaded) FeigeMediaApp(formFactor = formFactor)
+                    if (showBrand || !state.localLoaded) StartupBrand()
                     // 更新弹窗悬浮在所有页面之上，三端共用
                     UpdateDialogHost()
                 }

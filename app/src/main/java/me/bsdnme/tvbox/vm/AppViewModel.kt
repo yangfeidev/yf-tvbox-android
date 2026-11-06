@@ -19,7 +19,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +44,7 @@ data class AppUiState(
     val currentSite: Site? = null,
     val loading: Boolean = false,
     val initializing: Boolean = true,
+    val localLoaded: Boolean = false,
     val refreshingSubscriptionId: String? = null,
     val addingSubscriptionUrl: String? = null,
     val pinnedSites: Set<String> = emptySet(),
@@ -71,6 +75,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
     private val pendingAdds = mutableMapOf<String, Deferred<AddResult>>()
+    private val libraryWrites = Channel<() -> Unit>(Channel.UNLIMITED)
 
     private companion object {
         /** 直播列表本地缓存有效期：2 小时 */
@@ -78,19 +83,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        loadLocal()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            for (write in libraryWrites) write()
+        }
+        viewModelScope.launch { loadLocal() }
     }
 
-    private fun loadLocal() {
-        val settings = store.loadSettings()
-        val subscriptions = store.loadSubscriptions()
-        _state.update {
-            it.copy(
+    override fun onCleared() {
+        libraryWrites.close()
+        super.onCleared()
+    }
+
+    private suspend fun loadLocal() {
+        val local = withContext(Dispatchers.IO) {
+            val settings = store.loadSettings()
+            val subscriptions = store.loadSubscriptions()
+            AppUiState(
                 settings = settings,
                 subscriptions = subscriptions,
                 favorites = store.loadFavorites(),
                 history = store.loadHistory(),
                 pinnedSites = store.loadPinnedSites(),
+            )
+        }
+        val settings = local.settings
+        val subscriptions = local.subscriptions
+        _state.update {
+            it.copy(
+                settings = settings,
+                subscriptions = subscriptions,
+                favorites = local.favorites,
+                history = local.history,
+                pinnedSites = local.pinnedSites,
+                localLoaded = true,
             )
         }
 
@@ -296,10 +321,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (!forceRefresh) {
                 me.bsdnme.tvbox.data.net.LiveCache.get(url)?.let { return@withContext it }
                 val cachedRaw = store.readLiveCache(url, LIVE_CACHE_TTL_MS)
-                android.util.Log.d("FeigeMediaLive", "cache raw length = ${cachedRaw?.length ?: -1}")
                 cachedRaw?.let { raw ->
                     val groups = me.bsdnme.tvbox.data.net.LiveParser.parse(raw)
-                    android.util.Log.d("FeigeMediaLive", "cache parsed groups = ${groups.size}")
                     if (groups.isNotEmpty()) {
                         me.bsdnme.tvbox.data.net.LiveCache.put(url, groups)
                         return@withContext groups
@@ -312,7 +335,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // 网络失败时退回过期缓存：有旧数据总比一片空白强
                 val stale = store.readLiveCache(url, Long.MAX_VALUE)
-                android.util.Log.d("FeigeMediaLive", "network failed, stale=${stale?.length ?: -1}")
                 if (stale != null) {
                     return@withContext me.bsdnme.tvbox.data.net.LiveParser.parse(stale)
                 }
@@ -332,7 +354,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _state.value.favorites.any { it.uniqueKey == "$siteKey::$mediaId" }
 
     fun toggleFavorite(item: MediaItem, site: Site) {
-        viewModelScope.launch(Dispatchers.IO) {
             val key = "${site.key}::${item.id}"
             val current = _state.value.favorites
             val next = if (current.any { it.uniqueKey == key }) {
@@ -349,9 +370,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     ),
                 ) + current
             }
-            store.saveFavorites(next)
             _state.update { it.copy(favorites = next) }
-        }
+            libraryWrites.trySend { store.saveFavorites(next) }
     }
 
     fun recordHistory(item: MediaItem, site: Site, sourceName: String, episodeName: String, progress: Float) {
@@ -370,18 +390,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 ),
             ) + _state.value.history.filter { it.uniqueKey != key }).take(200)
         _state.update { it.copy(history = next) }
-        store.saveHistory(next)
+        libraryWrites.trySend { store.saveHistory(next) }
     }
 
     fun removeHistory(entry: LibraryEntry) {
         val next = _state.value.history.filterNot { it.uniqueKey == entry.uniqueKey }
         _state.update { it.copy(history = next) }
-        store.saveHistory(next)
+        libraryWrites.trySend { store.saveHistory(next) }
     }
 
     fun clearHistory() {
         _state.update { it.copy(history = emptyList()) }
-        store.saveHistory(emptyList())
+        libraryWrites.trySend { store.saveHistory(emptyList()) }
     }
 
     // ------------------------------------------------------------------ 设置

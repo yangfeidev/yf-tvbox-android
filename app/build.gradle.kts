@@ -16,8 +16,8 @@ android {
         // 老盒子（4.4）如果需要支持再单独降级评估
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
         // 电视与手机同一个包，靠运行时分流布局
         resourceConfigurations += listOf("zh", "en")
     }
@@ -45,7 +45,8 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

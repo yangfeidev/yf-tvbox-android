@@ -18,6 +18,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.bsdnme.tvbox.data.net.UpdateApi
 import me.bsdnme.tvbox.data.net.UpdateInfo
 import java.io.File
@@ -56,6 +58,11 @@ object UpdateCenter {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloadJob: Job? = null
+    private data class DownloadedApk(val info: UpdateInfo, val file: File, val mandatory: Boolean)
+    @Volatile private var downloadedApk: DownloadedApk? = null
+    private var awaitingInstallPermission = false
+    private val downloadMutex = Mutex()
+    @Volatile private var downloadGeneration = 0
 
     fun currentVersionCode(context: Context): Int {
         val pm = context.packageManager
@@ -115,29 +122,43 @@ object UpdateCenter {
     /** 开始下载，下载完成后自动拉起系统安装器 */
     fun startDownload(context: Context, info: UpdateInfo, mandatory: Boolean) {
         downloadJob?.cancel()
+        val generation = ++downloadGeneration
         uiState = UpdateUiState.Downloading(info, 0f)
         downloadJob = scope.launch {
             try {
-                val file = UpdateApi.download(context.applicationContext, info) { progress ->
-                    ensureActive() // 取消时在这里抛出，阻塞的 read 循环随之中断
-                    val state = uiState
-                    if (state is UpdateUiState.Downloading && state.info.versionCode == info.versionCode) {
-                        uiState = state.copy(progress = progress)
+                val file = downloadMutex.withLock {
+                    val cached = downloadedApk?.takeIf {
+                        it.info.versionCode == info.versionCode && it.info.apkUrl == info.apkUrl &&
+                            it.file.isFile && it.file.length() > 0
+                    }
+                    cached?.file ?: run {
+                        downloadedApk = null
+                        UpdateApi.download(context.applicationContext, info) { progress ->
+                            ensureActive()
+                            val state = uiState
+                            if (generation == downloadGeneration && state is UpdateUiState.Downloading) {
+                                uiState = state.copy(progress = progress)
+                            }
+                        }
                     }
                 }
-                val apk = file
-                withContext(Dispatchers.Main) { install(context, apk) }
-                uiState = UpdateUiState.Hidden
+                ensureActive()
+                withContext(Dispatchers.Main) {
+                    downloadedApk = DownloadedApk(info, file, mandatory)
+                    uiState = UpdateUiState.Hidden
+                    install(context, file)
+                }
             } catch (e: CancellationException) {
-                uiState = UpdateUiState.Hidden
+                if (generation == downloadGeneration) uiState = UpdateUiState.Hidden
             } catch (e: Exception) {
-                uiState = UpdateUiState.Failed(e.message ?: "下载失败", info, mandatory)
+                if (generation == downloadGeneration) uiState = UpdateUiState.Failed(e.message ?: "下载失败", info, mandatory)
             }
         }
     }
 
     /** 用户取消下载 */
     fun cancelDownload() {
+        downloadGeneration++
         downloadJob?.cancel()
         downloadJob = null
         uiState = UpdateUiState.Hidden
@@ -151,8 +172,7 @@ object UpdateCenter {
      * 拉起系统安装器。
      *
      * API 26+ 需要「允许安装未知应用」授权：没有授权时先跳系统设置页，
-     * 用户开完回来重新点「立即更新」即可（下载完成的 APK 已落盘，
-     * 不过当前流程简单处理为重新触发，代价可接受）。
+     * 用户返回后继续安装已完成下载的 APK。
      */
     fun install(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(
@@ -169,10 +189,23 @@ object UpdateCenter {
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:${context.packageName}"),
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            awaitingInstallPermission = true
             runCatching { context.startActivity(settingsIntent) }
-                .onFailure { context.startActivity(installIntent) }
+                .onFailure { awaitingInstallPermission = false; context.startActivity(installIntent) }
         } else {
             context.startActivity(installIntent)
+        }
+    }
+
+    fun onResume(context: Context) {
+        if (!awaitingInstallPermission) return
+        awaitingInstallPermission = false
+        val downloaded = downloadedApk ?: return
+        if (Build.VERSION.SDK_INT < 26 || context.packageManager.canRequestPackageInstalls()) {
+            if (downloaded.file.isFile && downloaded.file.length() > 0) install(context, downloaded.file)
+            else uiState = UpdateUiState.Available(downloaded.info, downloaded.mandatory)
+        } else {
+            uiState = UpdateUiState.Available(downloaded.info, downloaded.mandatory)
         }
     }
 }
