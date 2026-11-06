@@ -12,12 +12,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -63,6 +67,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -231,6 +238,17 @@ fun PlayerScreen(
         onDispose {
             activity?.requestedOrientation =
                 original ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    // 全屏播放隐藏系统栏（状态栏 + 导航栏），避免系统状态栏压在左上角返回按钮上；
+    // sticky 模式下从边缘滑入系统栏会短暂浮现又自动消失，退出播放器后恢复显示。
+    DisposableEffect(activity) {
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, hostView) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -677,10 +695,12 @@ private fun PickerOption(label: String, onClick: () -> Unit, modifier: Modifier 
 
 @Composable
 private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+    // 状态栏内边距加在背景之后：半透明背景延伸到状态栏底下，内容不被状态栏压住
     Box(
         modifier = modifier
             .fillMaxWidth()
             .background(Color(0xCC0B0E14))
+            .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -735,6 +755,7 @@ private fun BottomBar(
         modifier = modifier
             .fillMaxWidth()
             .background(Color(0xD90B0E14))
+            .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
         Column {
