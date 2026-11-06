@@ -83,11 +83,16 @@ if [ -n "$BASE_CODE" ] && [ "$VERSION_CODE" -le "$BASE_CODE" ] 2>/dev/null; then
   case "$ANSWER" in
     y|Y)
       NEW_CODE=$((BASE_CODE + 1))
-      # 只动 versionCode 那一行，versionName 保持手动管理
+      # versionName 末段同步 +1（1.0.7 → 1.0.8）：只加 versionCode 会让
+      # APK 文件名和已发布版本撞车，覆盖同名 URL
+      NEW_NAME=$(echo "$VERSION_NAME" | awk -F. -v OFS=. '{$NF=$NF+1; print}')
       sed -i '' -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)$BASE_CODE$/\1$NEW_CODE/" "$GRADLE_FILE" \
         || fail "versionCode 自动 +1 失败，请手动修改后重试"
+      sed -i '' -E "s/^(--*[[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"$VERSION_NAME\"/\1\"$NEW_NAME\"/" "$GRADLE_FILE" \
+        || fail "versionName 自动升级失败，请手动修改后重试"
       VERSION_CODE=$NEW_CODE
-      echo "  versionCode: ${BASE_CODE} → ${NEW_CODE}"
+      VERSION_NAME="$NEW_NAME"
+      echo "  versionCode: ${BASE_CODE} → ${NEW_CODE}，versionName → ${NEW_NAME}"
       ;;
     *) echo "已取消"; exit 1 ;;
   esac
