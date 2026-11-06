@@ -139,13 +139,6 @@ WRANGLER_SEND_METRICS=false "$W" r2 object put "$BUCKET/$APP_ID/update.json" \
   --content-type "application/json; charset=utf-8" > /dev/null \
   || fail "update.json 上传失败"
 
-# 固定名 latest.apk：对外分享用的「永远最新版」地址，每次发版覆盖
-echo "→ 上传 $BUCKET/$APP_ID/latest.apk …"
-WRANGLER_SEND_METRICS=false "$W" r2 object put "$BUCKET/$APP_ID/latest.apk" \
-  --file "$APK" --remote \
-  --content-type "application/vnd.android.package-archive" > /dev/null \
-  || fail "latest.apk 上传失败"
-
 echo
 echo "✔ 发布完成 v$VERSION_NAME ($VERSION_CODE)"
 echo "  $DL_BASE/$APP_ID/update.json"
