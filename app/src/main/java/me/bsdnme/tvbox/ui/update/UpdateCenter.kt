@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import me.bsdnme.tvbox.data.net.SourceException
 import me.bsdnme.tvbox.data.net.UpdateApi
 import me.bsdnme.tvbox.data.net.UpdateInfo
 import java.io.File
@@ -91,6 +92,26 @@ object UpdateCenter {
 
     private const val KEY_REMIND_VERSION = "remind_version"
     private const val KEY_REMIND_DATE = "remind_date"
+
+    /**
+     * 校验下载的 APK 确实是目标版本。
+     * 用 PackageManager 解析包信息，与 update.json 里的 versionCode 比对；
+     * 不一致就删掉文件并报错，走 Failed 态让用户重试，绝不拉起安装器。
+     */
+    private fun verifyDownloadedApk(context: Context, file: File, expectedVersionCode: Int) {
+        if (!file.isFile || file.length() == 0L) {
+            throw SourceException("下载的安装包为空，请重试")
+        }
+        val archiveInfo = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        if (archiveInfo == null) {
+            file.delete()
+            throw SourceException("安装包已损坏，请重新下载")
+        }
+        if (archiveInfo.versionCode != expectedVersionCode) {
+            file.delete()
+            throw SourceException("安装包版本不正确（预期 v$expectedVersionCode，实际 v${archiveInfo.versionCode}），请重试")
+        }
+    }
 
     fun currentVersionCode(context: Context): Int {
         val pm = context.packageManager
@@ -171,6 +192,9 @@ object UpdateCenter {
                     }
                 }
                 ensureActive()
+                // 下载产物必须是目标版本：防止缓存/覆盖/桶内文件错乱导致装错包，
+                // 也让「装完还是旧版」这类问题在下载阶段就暴露，而不是装完说不清
+                verifyDownloadedApk(context, file, info.versionCode)
                 withContext(Dispatchers.Main) {
                     downloadedApk = DownloadedApk(info, file, mandatory)
                     // 已拉起安装器 = 用户在处理更新了，当天不再重复提醒

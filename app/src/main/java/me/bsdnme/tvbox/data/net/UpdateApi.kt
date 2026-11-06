@@ -67,8 +67,12 @@ object UpdateApi {
         return info
     }
 
-    /** 拉取并解析版本信息，网络失败直接抛 [SourceException]，由上层决定静默还是提示 */
-    fun check(): UpdateInfo = parse(Http.get(CHECK_URL))
+    /**
+     * 拉取并解析版本信息，网络失败直接抛 [SourceException]，由上层决定静默还是提示。
+     * URL 带时间戳穿透缓存：update.json 覆盖上传后，绝不能拿到边缘缓存的旧版本，
+     * 否则刚发的新版客户端会「查无更新」或提示错版本。
+     */
+    fun check(): UpdateInfo = parse(Http.get("$CHECK_URL?t=${System.currentTimeMillis()}"))
 
     /**
      * 下载 APK 到应用外部私有目录 update/，覆盖旧文件。
