@@ -29,6 +29,10 @@ import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -125,10 +129,14 @@ fun PlayerScreen(
     request: PlaybackRequest,
     onClose: () -> Unit,
     onEpisodeChange: ((Int) -> Unit)? = null,
-    onProgress: ((episodeName: String, progress: Float) -> Unit)? = null,
+    onProgress: ((sourceName: String, episodeName: String, progress: Float) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var episodeIndex by remember { mutableIntStateOf(request.episodeIndex) }
+    var sourceIndex by remember { mutableIntStateOf(request.sourceIndex) }
+    var retryKey by remember { mutableIntStateOf(0) }
+    var showSourcePicker by remember { mutableStateOf(false) }
+    var showEpisodePicker by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var focusControls by remember { mutableStateOf(true) }
     // 用户操作计数：任何按键 / 点击 / 焦点移动都 +1，用来重置「4 秒自动收起」计时
@@ -137,11 +145,19 @@ fun PlayerScreen(
     val playFocusRequester = remember { FocusRequester() }
     val playerFocusRequester = remember { FocusRequester() }
     val errorFocusRequester = remember { FocusRequester() }
+    val pickerFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(showSourcePicker, showEpisodePicker) {
+        if (showSourcePicker || showEpisodePicker) {
+            androidx.compose.runtime.withFrameNanos { }
+            runCatching { pickerFocusRequester.requestFocus() }
+        }
+    }
     var playerHasFocus by remember { mutableStateOf(false) }
     var played by remember { mutableStateOf(false) }
     var resolving by remember { mutableStateOf(true) }
     var pendingResume by remember { mutableStateOf(request.resumeProgress.coerceIn(0f, 0.98f)) }
     val currentEpisode by rememberUpdatedState(episodeIndex)
+    val currentSource by rememberUpdatedState(sourceIndex)
     val progressCallback by rememberUpdatedState(onProgress)
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -155,7 +171,8 @@ fun PlayerScreen(
     }
 
     val sources = request.detail?.usableSources.orEmpty()
-    val episodes = sources.getOrNull(request.sourceIndex)?.episodes.orEmpty()
+    val episodes = sources.getOrNull(sourceIndex)?.episodes.orEmpty()
+    val latestEpisodes by rememberUpdatedState(episodes)
     val rawUrl: String? = request.channel?.url ?: episodes.getOrNull(episodeIndex)?.url
     var resolved by remember { mutableStateOf<VodApi.Playback?>(null) }
     val url = resolved?.url
@@ -172,7 +189,8 @@ fun PlayerScreen(
             if (!request.isLive && played && pendingResume == 0f) {
                 val length = player.duration
                 val progress = if (length > 0) (player.currentPosition.toFloat() / length).coerceIn(0f, 1f) else 0f
-                progressCallback?.invoke(episodes.getOrNull(currentEpisode)?.name.orEmpty(), progress)
+                val source = sources.getOrNull(currentSource)
+                progressCallback?.invoke(source?.name.orEmpty(), source?.episodes?.getOrNull(currentEpisode)?.name.orEmpty(), progress)
             }
             player.release()
         }
@@ -234,7 +252,7 @@ fun PlayerScreen(
         onDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(rawUrl, request.site, request.sourceIndex) {
+    LaunchedEffect(rawUrl, request.site, sourceIndex, retryKey) {
         player.stop()
         resolved = null
         resolving = true
@@ -246,7 +264,7 @@ fun PlayerScreen(
         playError = null
         try {
             val playback = if (request.site?.type == 4 && !request.isLive) {
-                withContext(Dispatchers.IO) { VodApi.resolvePlayback(request.site, sources.getOrNull(request.sourceIndex)?.name.orEmpty(), rawUrl) }
+                withContext(Dispatchers.IO) { VodApi.resolvePlayback(request.site, sources.getOrNull(sourceIndex)?.name.orEmpty(), rawUrl) }
             } else VodApi.Playback(rawUrl, request.channel?.headers.orEmpty())
             resolved = playback
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -289,15 +307,15 @@ fun PlayerScreen(
             isPlaying = player.isPlaying
             if (player.isPlaying && !played && !request.isLive) {
                 played = true
-                if (pendingResume == 0f) onProgress?.invoke(episodes.getOrNull(episodeIndex)?.name.orEmpty(), if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f)
+                if (pendingResume == 0f) progressCallback?.invoke(sources.getOrNull(sourceIndex)?.name.orEmpty(), latestEpisodes.getOrNull(episodeIndex)?.name.orEmpty(), if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f)
             }
             delay(500)
         }
     }
 
     // 无操作自动收起：interactionTick 变化（任何用户操作）都会重置 4 秒倒计时
-    LaunchedEffect(controlsVisible, isPlaying, interactionTick) {
-        if (controlsVisible && isPlaying) {
+    LaunchedEffect(controlsVisible, isPlaying, interactionTick, showSourcePicker, showEpisodePicker) {
+        if (controlsVisible && isPlaying && !showSourcePicker && !showEpisodePicker) {
             delay(4000)
             controlsVisible = false
             focusControls = false
@@ -321,8 +339,9 @@ fun PlayerScreen(
         while (true) {
             delay(10_000)
             if (duration > 0 && played && pendingResume == 0f) {
-                onProgress?.invoke(
-                    episodes.getOrNull(episodeIndex)?.name.orEmpty(),
+                progressCallback?.invoke(
+                    sources.getOrNull(sourceIndex)?.name.orEmpty(),
+                    latestEpisodes.getOrNull(episodeIndex)?.name.orEmpty(),
                     (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f),
                 )
             }
@@ -330,7 +349,53 @@ fun PlayerScreen(
     }
 
     BackHandler {
-        onClose()
+        when {
+            showSourcePicker -> showSourcePicker = false
+            showEpisodePicker -> showEpisodePicker = false
+            else -> onClose()
+        }
+    }
+
+    fun saveProgress() {
+        if (played && duration > 0 && pendingResume == 0f) onProgress?.invoke(
+            sources.getOrNull(sourceIndex)?.name.orEmpty(), episodes.getOrNull(episodeIndex)?.name.orEmpty(),
+            (position.toFloat() / duration).coerceIn(0f, 1f))
+    }
+
+    if (showSourcePicker || showEpisodePicker) {
+        val choosingSource = showSourcePicker
+        AlertDialog(
+            onDismissRequest = { showSourcePicker = false; showEpisodePicker = false },
+            title = { Text(if (choosingSource) "切换线路" else "选择剧集") },
+            text = {
+                LazyColumn(Modifier.height(300.dp)) {
+                    if (choosingSource) itemsIndexed(sources) { index, source ->
+                        PickerOption(label = (if (index == sourceIndex) "✓ " else "") + source.name,
+                            modifier = if (index == 0) Modifier.focusRequester(pickerFocusRequester) else Modifier, onClick = {
+                            if (index != sourceIndex) {
+                                saveProgress()
+                                val episodeName = episodes.getOrNull(episodeIndex)?.name
+                                val match = sources[index].episodes.indexOfFirst { it.name == episodeName }
+                                val nextProgress = if (match >= 0 && played && duration > 0) (position.toFloat() / duration).coerceIn(0f, 0.98f) else 0f
+                                sourceIndex = index
+                                episodeIndex = if (match >= 0) match else 0
+                                pendingResume = nextProgress
+                                played = false
+                            }
+                            showSourcePicker = false
+                        })
+                    } else itemsIndexed(episodes) { index, episode ->
+                        PickerOption(label = (if (index == episodeIndex) "✓ " else "") + episode.name,
+                            modifier = if (index == 0) Modifier.focusRequester(pickerFocusRequester) else Modifier, onClick = {
+                            if (index != episodeIndex) { saveProgress(); pendingResume = 0f; played = false; episodeIndex = index }
+                            showEpisodePicker = false
+                        })
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSourcePicker = false; showEpisodePicker = false }) { Text("关闭") } },
+            containerColor = XColors.SurfaceRaised,
+        )
     }
 
     fun seekBy(seconds: Int) {
@@ -421,6 +486,10 @@ fun PlayerScreen(
                         color = XColors.TextSecondary,
                     )
                     Spacer(Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { playError = null; retryKey++ }) { Text("重试") }
+                        if (sources.size > 1) TextButton(onClick = { showSourcePicker = true }) { Text("切换线路") }
+                    }
                     FocusableSurface(onClick = onClose, modifier = Modifier.focusRequester(errorFocusRequester), shape = RoundedCornerShape(XRadii.pill)) {
                         Box(
                             Modifier
@@ -458,7 +527,7 @@ fun PlayerScreen(
                 },
                 onPrevious = if (episodes.isNotEmpty() && episodeIndex > 0) {
                     {
-                        if (played && duration > 0) onProgress?.invoke(episodes[episodeIndex].name, (position.toFloat() / duration).coerceIn(0f, 1f))
+                        saveProgress()
                         pendingResume = 0f
                         played = false
                         episodeIndex -= 1
@@ -467,19 +536,29 @@ fun PlayerScreen(
                 } else null,
                 onNext = if (episodes.isNotEmpty() && episodeIndex < episodes.size - 1) {
                     {
-                        if (played && duration > 0) onProgress?.invoke(episodes[episodeIndex].name, (position.toFloat() / duration).coerceIn(0f, 1f))
+                        saveProgress()
                         pendingResume = 0f
                         played = false
                         episodeIndex += 1
                         onEpisodeChange?.invoke(episodeIndex)
                     }
                 } else null,
+                onChooseSource = if (sources.size > 1) ({ showSourcePicker = true }) else null,
+                onChooseEpisode = if (episodes.size > 1) ({ showEpisodePicker = true }) else null,
                 focusRequester = playFocusRequester,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onFocusChanged { if (it.hasFocus) interactionTick++ },
             )
         }
+    }
+}
+
+@Composable
+private fun PickerOption(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    FocusableSurface(onClick = onClick, modifier = modifier.fillMaxWidth().padding(vertical = 3.dp),
+        shape = RoundedCornerShape(XRadii.md), focusScale = 1.01f) {
+        Text(label, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), color = XColors.TextPrimary)
     }
 }
 
@@ -533,6 +612,8 @@ private fun BottomBar(
     onTogglePlay: () -> Unit,
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
+    onChooseSource: (() -> Unit)?,
+    onChooseEpisode: (() -> Unit)?,
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -584,6 +665,8 @@ private fun BottomBar(
                 if (onNext != null) {
                     PlayerIcon(Icons.Outlined.SkipNext, "下一集", onNext, primary = false)
                 }
+                if (onChooseSource != null) TextButton(onClick = onChooseSource) { Text("线路", color = XColors.TextPrimary) }
+                if (onChooseEpisode != null) TextButton(onClick = onChooseEpisode) { Text("选集", color = XColors.TextPrimary) }
             }
         }
     }

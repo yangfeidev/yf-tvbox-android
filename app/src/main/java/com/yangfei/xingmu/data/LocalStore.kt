@@ -93,6 +93,9 @@ class LocalStore(context: Context) {
 
     fun saveHistory(list: List<LibraryEntry>) = saveEntries(KEY_HISTORY, list)
 
+    fun loadPinnedSites(): Set<String> = prefs.getStringSet("pinned_sites", emptySet())?.toSet().orEmpty()
+    fun savePinnedSites(keys: Set<String>) { prefs.edit().putStringSet("pinned_sites", keys.toSet()).apply() }
+
     fun loadSearchHistory(): List<String> = runCatching {
         val array = JSONArray(prefs.getString("search_history", "[]"))
         (0 until array.length()).map { array.optString(it) }.filter { it.isNotBlank() }
@@ -162,6 +165,7 @@ class LocalStore(context: Context) {
         poster = node.optString("poster"),
         remarks = node.optString("remarks"),
         episodeName = node.optString("episodeName"),
+        sourceName = node.optString("sourceName"),
         progress = node.optDouble("progress", 0.0).toFloat(),
         updatedAt = node.optLong("updatedAt"),
     )
@@ -173,6 +177,7 @@ class LocalStore(context: Context) {
         put("poster", entry.poster)
         put("remarks", entry.remarks)
         put("episodeName", entry.episodeName)
+        put("sourceName", entry.sourceName)
         put("progress", entry.progress.toDouble())
         put("updatedAt", entry.updatedAt)
     }

@@ -150,6 +150,7 @@ data class LibraryEntry(
     val poster: String = "",
     val remarks: String = "",
     val episodeName: String = "",
+    val sourceName: String = "",
     val progress: Float = 0f,
     val updatedAt: Long = 0L,
 ) {
@@ -160,6 +161,13 @@ data class ResumeTarget(val sourceIndex: Int, val episodeIndex: Int, val progres
 
 fun findResumeTarget(sources: List<PlaySource>, history: LibraryEntry?): ResumeTarget? {
     if (history == null || history.episodeName.isBlank() || history.progress <= 0f || history.progress >= 0.98f) return null
+    if (history.sourceName.isNotBlank()) {
+        val sourceIndex = sources.indexOfFirst { it.name == history.sourceName }
+        if (sourceIndex >= 0) {
+            val episodeIndex = sources[sourceIndex].episodes.indexOfFirst { it.name == history.episodeName }
+            if (episodeIndex >= 0) return ResumeTarget(sourceIndex, episodeIndex, history.progress)
+        }
+    }
     sources.forEachIndexed { sourceIndex, source ->
         val episodeIndex = source.episodes.indexOfFirst { it.name == history.episodeName }
         if (episodeIndex >= 0) return ResumeTarget(sourceIndex, episodeIndex, history.progress)

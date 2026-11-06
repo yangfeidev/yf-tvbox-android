@@ -34,6 +34,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.yangfei.xingmu.core.DefaultSources
@@ -80,6 +82,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
     var submitting by remember { mutableStateOf(false) }
     var warehouse by remember { mutableStateOf<List<WarehouseEntry>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var siteQuery by remember { mutableStateOf("") }
 
     fun submit(targetUrl: String, targetName: String) {
         if (targetUrl.isBlank()) return
@@ -291,22 +294,44 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
         }
 
         item {
+            TextField(
+                value = siteQuery,
+                onValueChange = { siteQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("搜索源站名称") },
+                shape = RoundedCornerShape(XRadii.pill),
+                colors = fieldColors(),
+            )
+        }
+
+        item {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                state.usableSites.forEach { site ->
-                    PillChip(
-                        label = site.name,
-                        selected = state.currentSite?.key == site.key,
-                        onClick = {
-                            if (state.currentSite?.key != site.key) {
-                                vm.selectSite(site)
-                                onSiteChanged()
-                            }
-                        },
-                    )
+                val prefix = "${state.settings.activeSubscriptionId}::"
+                val visibleSites = state.usableSites.filter { it.name.contains(siteQuery.trim(), ignoreCase = true) }
+                    .sortedBy { if (prefix + it.key in state.pinnedSites) 0 else 1 }
+                visibleSites.forEach { site ->
+                    val pinned = prefix + site.key in state.pinnedSites
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PillChip(
+                            label = site.name,
+                            selected = state.currentSite?.key == site.key,
+                            onClick = {
+                                if (state.currentSite?.key != site.key) {
+                                    vm.selectSite(site)
+                                    onSiteChanged()
+                                }
+                            },
+                        )
+                        PillChip(label = if (pinned) "★" else "☆", selected = pinned,
+                            modifier = Modifier.semantics { contentDescription = if (pinned) "取消置顶 ${site.name}" else "置顶 ${site.name}" },
+                            onClick = { vm.togglePinnedSite(site) })
+                    }
                 }
+                if (visibleSites.isEmpty() && siteQuery.isNotBlank()) Text("没有找到匹配的源站", style = MaterialTheme.typography.bodySmall)
             }
         }
 

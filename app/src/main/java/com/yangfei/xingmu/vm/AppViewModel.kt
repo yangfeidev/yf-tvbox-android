@@ -38,6 +38,7 @@ data class AppUiState(
     val loading: Boolean = false,
     val initializing: Boolean = true,
     val refreshingSubscriptionId: String? = null,
+    val pinnedSites: Set<String> = emptySet(),
     val error: String? = null,
     val favorites: List<LibraryEntry> = emptyList(),
     val history: List<LibraryEntry> = emptyList(),
@@ -83,6 +84,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 subscriptions = subscriptions,
                 favorites = store.loadFavorites(),
                 history = store.loadHistory(),
+                pinnedSites = store.loadPinnedSites(),
             )
         }
 
@@ -243,6 +245,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(currentSite = site, settings = it.settings.copy(currentSiteKey = site.key)) }
     }
 
+    fun togglePinnedSite(site: Site) {
+        val key = "${_state.value.settings.activeSubscriptionId}::${site.key}"
+        val pins = _state.value.pinnedSites
+        val next = if (key in pins) pins - key else pins + key
+        store.savePinnedSites(next)
+        _state.update { it.copy(pinnedSites = next) }
+    }
+
     // ------------------------------------------------------------------ 直播
 
     /**
@@ -315,7 +325,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun recordHistory(item: MediaItem, site: Site, episodeName: String, progress: Float) {
+    fun recordHistory(item: MediaItem, site: Site, sourceName: String, episodeName: String, progress: Float) {
         val key = "${site.key}::${item.id}"
         val next = (listOf(
                 LibraryEntry(
@@ -325,13 +335,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     poster = item.poster,
                     remarks = item.remarks,
                     episodeName = episodeName,
+                    sourceName = sourceName,
                     progress = progress.coerceIn(0f, 1f),
                     updatedAt = System.currentTimeMillis(),
                 ),
-            ) + _state.value.history.filter {
-                it.uniqueKey != key && !(item.poster.isNotBlank() && it.poster == item.poster &&
-                    it.name.trim().equals(item.name.trim(), ignoreCase = true))
-            }).take(200)
+            ) + _state.value.history.filter { it.uniqueKey != key }).take(200)
         _state.update { it.copy(history = next) }
         store.saveHistory(next)
     }

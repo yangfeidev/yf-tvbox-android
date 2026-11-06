@@ -80,6 +80,7 @@ data class HomeSnapshot(val latest: List<MediaItem>, val rails: List<Pair<Catego
 fun HomeScreen(
     state: AppUiState,
     onOpenDetail: (Site, MediaItem) -> Unit,
+    onResume: (Site, MediaItem) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     cache: MutableMap<Site, HomeSnapshot>,
@@ -222,7 +223,7 @@ fun HomeScreen(
                             val originalSite = state.usableSites.firstOrNull { it.key == entry.siteKey }
                             PosterCard(item = entry.toMediaItem(), width = cardWidth,
                                 subtitle = originalSite?.let { "片源 · ${it.name}" } ?: "片源不可用",
-                                onClick = { if (originalSite != null) onOpenDetail(originalSite, entry.toMediaItem()) })
+                                onClick = { if (originalSite != null) onResume(originalSite, entry.toMediaItem()) })
                         }
                     }
                 }

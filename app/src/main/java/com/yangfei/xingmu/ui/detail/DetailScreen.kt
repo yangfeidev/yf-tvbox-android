@@ -89,6 +89,8 @@ fun DetailScreen(
     onBack: () -> Unit,
     onPlay: (PlaybackRequest) -> Unit,
     isActive: Boolean = true,
+    autoResume: Boolean = false,
+    onAutoResumeHandled: () -> Unit = {},
 ) {
     val formFactor = LocalFormFactor.current
     val padding = formFactor.horizontalPadding
@@ -131,6 +133,15 @@ fun DetailScreen(
         } finally {
             loading = false
         }
+    }
+    LaunchedEffect(autoResume, loading, detail) {
+        val data = detail
+        if (autoResume && !loading && data != null) {
+            val resume = findResumeTarget(data.usableSources, history)
+            onAutoResumeHandled()
+            if (resume != null) onPlay(PlaybackRequest(site = site, detail = data,
+                sourceIndex = resume.sourceIndex, episodeIndex = resume.episodeIndex, resumeProgress = resume.progress))
+        } else if (autoResume && !loading && error != null) onAutoResumeHandled()
     }
 
     Box(Modifier.fillMaxSize().background(XColors.Background)) {
@@ -239,6 +250,8 @@ fun DetailScreen(
                         favorite = vm.isFavorite(site.key, data.item.id),
                         playLabel = if (resume != null) "继续播放 · ${history!!.episodeName}" else "立即播放",
                         onToggleFavorite = { vm.toggleFavorite(data.item, site) },
+                        onRestart = if (resume != null) ({ onPlay(PlaybackRequest(site = site, detail = data,
+                            sourceIndex = resume.sourceIndex, episodeIndex = resume.episodeIndex)) }) else null,
                         onPlay = {
                             onPlay(
                                 PlaybackRequest(
@@ -388,6 +401,7 @@ private fun BottomBar(
     favorite: Boolean,
     playLabel: String,
     onToggleFavorite: () -> Unit,
+    onRestart: (() -> Unit)?,
     onPlay: () -> Unit,
     padding: androidx.compose.ui.unit.Dp,
     focusRequester: FocusRequester? = null,
@@ -419,6 +433,10 @@ private fun BottomBar(
             }
         }
         Spacer(Modifier.width(10.dp))
+        if (onRestart != null) {
+            PillChip(label = "从头播放", selected = false, onClick = onRestart)
+            Spacer(Modifier.width(10.dp))
+        }
         FocusableSurface(
             onClick = onPlay,
             modifier = Modifier.weight(1f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),

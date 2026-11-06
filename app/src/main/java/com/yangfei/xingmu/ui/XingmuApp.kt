@@ -57,6 +57,7 @@ fun XingmuApp(formFactor: FormFactor) {
     val homeCache = remember { mutableMapOf<Site, HomeSnapshot>() }
     var focusHomeRequest by remember { mutableStateOf(0) }
     var detailTarget by remember { mutableStateOf<Pair<Site, MediaItem>?>(null) }
+    var resumeFromHome by remember { mutableStateOf(false) }
     var playback by remember { mutableStateOf<PlaybackRequest?>(null) }
     var searchVisible by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
@@ -90,6 +91,7 @@ fun XingmuApp(formFactor: FormFactor) {
                     Tab.Home -> HomeScreen(
                         state = state,
                         onOpenDetail = { site, item -> detailTarget = site to item },
+                        onResume = { site, item -> resumeFromHome = true; detailTarget = site to item },
                         onOpenSearch = { searchVisible = true },
                         onOpenSettings = { tab = Tab.Settings },
                         cache = homeCache,
@@ -140,14 +142,16 @@ fun XingmuApp(formFactor: FormFactor) {
         }
 
         detailTarget?.let { (site, item) ->
-            BackHandler(enabled = playback == null) { detailTarget = null }
+            BackHandler(enabled = playback == null) { detailTarget = null; resumeFromHome = false }
             DetailScreen(
                 vm = vm,
                 site = site,
                 item = item,
-                onBack = { detailTarget = null },
+                onBack = { detailTarget = null; resumeFromHome = false },
                 onPlay = { request -> playback = request },
                 isActive = playback == null,
+                autoResume = resumeFromHome,
+                onAutoResumeHandled = { resumeFromHome = false },
             )
         }
 
@@ -156,11 +160,11 @@ fun XingmuApp(formFactor: FormFactor) {
                 request = request,
                 onClose = { playback = null },
                 onEpisodeChange = { },
-                onProgress = { episodeName, progress ->
+                onProgress = { sourceName, episodeName, progress ->
                     val site = request.site
                     val detail = request.detail
                     if (site != null && detail != null) {
-                        vm.recordHistory(detail.item, site, episodeName, progress)
+                        vm.recordHistory(detail.item, site, sourceName, episodeName, progress)
                     }
                 },
             )

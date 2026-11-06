@@ -20,4 +20,14 @@ class ResumeTargetTest {
         assertNull(findResumeTarget(sources, entry("第1集", 0f)))
         assertNull(findResumeTarget(sources, null))
     }
+
+    @Test fun prefersSavedSourceWhenEpisodeNamesOverlap() {
+        val lines = listOf(
+            PlaySource("line A", listOf(Episode("第1集", "a"))),
+            PlaySource("line B", listOf(Episode("第1集", "b"))),
+        )
+        val saved = entry("第1集", 0.4f).copy(sourceName = "line B")
+        assertEquals(ResumeTarget(1, 0, 0.4f), findResumeTarget(lines, saved))
+        assertEquals(ResumeTarget(0, 0, 0.4f), findResumeTarget(lines, saved.copy(sourceName = "old line")))
+    }
 }
