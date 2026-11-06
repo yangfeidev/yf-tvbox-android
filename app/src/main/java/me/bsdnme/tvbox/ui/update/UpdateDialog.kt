@@ -46,7 +46,7 @@ fun UpdateDialogHost() {
 
         UpdateUiState.Checking -> {
             AlertDialog(
-                onDismissRequest = { UpdateCenter.dismiss() },
+                onDismissRequest = { UpdateCenter.dismiss(context) },
                 containerColor = XColors.SurfaceRaised,
                 text = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -59,14 +59,14 @@ fun UpdateDialogHost() {
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { UpdateCenter.dismiss() }) { Text("取消") }
+                    TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("取消") }
                 },
             )
         }
 
         is UpdateUiState.Available -> {
             AlertDialog(
-                onDismissRequest = { if (!state.mandatory) UpdateCenter.dismiss() },
+                onDismissRequest = { if (!state.mandatory) UpdateCenter.dismiss(context) },
                 containerColor = XColors.SurfaceRaised,
                 title = {
                     Text(
@@ -107,7 +107,7 @@ fun UpdateDialogHost() {
                 },
                 dismissButton = {
                     if (!state.mandatory) {
-                        TextButton(onClick = { UpdateCenter.dismiss() }) { Text("以后再说") }
+                        TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("以后再说") }
                     }
                 },
             )
@@ -137,14 +137,14 @@ fun UpdateDialogHost() {
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { UpdateCenter.cancelDownload() }) { Text("取消") }
+                    TextButton(onClick = { UpdateCenter.cancelDownload(context) }) { Text("取消") }
                 },
             )
         }
 
         is UpdateUiState.Failed -> {
             AlertDialog(
-                onDismissRequest = { if (!state.mandatory) UpdateCenter.dismiss() },
+                onDismissRequest = { if (!state.mandatory) UpdateCenter.dismiss(context) },
                 containerColor = XColors.SurfaceRaised,
                 title = {
                     Text("更新失败", fontWeight = FontWeight.Bold, color = XColors.TextPrimary)
@@ -159,7 +159,7 @@ fun UpdateDialogHost() {
                 },
                 dismissButton = {
                     if (!state.mandatory) {
-                        TextButton(onClick = { UpdateCenter.dismiss() }) { Text("关闭") }
+                        TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("关闭") }
                     }
                 },
             )

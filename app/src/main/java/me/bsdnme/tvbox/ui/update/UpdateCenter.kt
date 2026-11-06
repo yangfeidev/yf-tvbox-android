@@ -64,6 +64,34 @@ object UpdateCenter {
     private val downloadMutex = Mutex()
     @Volatile private var downloadGeneration = 0
 
+    // ------------------------------------------------------------------ 当天免打扰
+    //
+    // 只要用户表达过「现在不更」（点以后再说 / 关弹窗 / 取消下载 / 已拉起安装器），
+    // 当天静默检查就不再弹这个版本，第二天才重新提醒。
+    // 手动检查（设置页）不看这个标记：用户主动查就该有结果。
+
+    private fun remindPrefs(context: Context) =
+        context.applicationContext.getSharedPreferences("feigemedia_update", Context.MODE_PRIVATE)
+
+    private fun today(): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
+    private fun isRemindSuppressed(context: Context, versionCode: Int): Boolean {
+        val prefs = remindPrefs(context)
+        return prefs.getInt(KEY_REMIND_VERSION, -1) == versionCode &&
+            prefs.getString(KEY_REMIND_DATE, null) == today()
+    }
+
+    private fun markRemindLater(context: Context, versionCode: Int) {
+        remindPrefs(context).edit()
+            .putInt(KEY_REMIND_VERSION, versionCode)
+            .putString(KEY_REMIND_DATE, today())
+            .apply()
+    }
+
+    private const val KEY_REMIND_VERSION = "remind_version"
+    private const val KEY_REMIND_DATE = "remind_date"
+
     fun currentVersionCode(context: Context): Int {
         val pm = context.packageManager
         val pi = pm.getPackageInfo(context.packageName, 0)
@@ -90,7 +118,7 @@ object UpdateCenter {
             runCatching {
                 val info = UpdateApi.check()
                 val current = currentVersionCode(context)
-                if (info.versionCode > current) {
+                if (info.versionCode > current && !isRemindSuppressed(context, info.versionCode)) {
                     uiState = UpdateUiState.Available(info, mandatory(current, info))
                 }
             }
@@ -145,6 +173,9 @@ object UpdateCenter {
                 ensureActive()
                 withContext(Dispatchers.Main) {
                     downloadedApk = DownloadedApk(info, file, mandatory)
+                    // 已拉起安装器 = 用户在处理更新了，当天不再重复提醒
+                    // （安装器里取消或没装完就切回来，也不会再弹）
+                    markRemindLater(context, info.versionCode)
                     uiState = UpdateUiState.Hidden
                     install(context, file)
                 }
@@ -156,15 +187,28 @@ object UpdateCenter {
         }
     }
 
-    /** 用户取消下载 */
-    fun cancelDownload() {
+    /** 用户取消下载：同样算「今天不想更」，当天静默检查免打扰 */
+    fun cancelDownload(context: Context) {
+        val state = uiState
+        if (state is UpdateUiState.Downloading) markRemindLater(context, state.info.versionCode)
         downloadGeneration++
         downloadJob?.cancel()
         downloadJob = null
         uiState = UpdateUiState.Hidden
     }
 
-    fun dismiss() {
+    /**
+     * 用户关闭弹窗（以后再说 / 关闭 / 点外部）：
+     * 记录「当天不再提醒该版本」，第二天静默检查才重新弹。
+     */
+    fun dismiss(context: Context) {
+        val state = uiState
+        val version = when (state) {
+            is UpdateUiState.Available -> state.info.versionCode
+            is UpdateUiState.Failed -> state.info.versionCode
+            else -> null
+        }
+        version?.let { markRemindLater(context, it) }
         uiState = UpdateUiState.Hidden
     }
 
