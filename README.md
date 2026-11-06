@@ -18,7 +18,7 @@ TVBox 类壳应用，通过自行提供的订阅地址加载点播与直播内�
 ## 工程结构
 
 ```
-app/src/main/java/com/yangfei/xingmu/
+app/src/main/java/me/bsdnme/tvbox/
 ├── MainActivity.kt              唯一 Activity，形态判定后进入 Compose
 ├── core/
 │   ├── DeviceForm.kt            手机 / 平板 / 电视判定
@@ -35,7 +35,7 @@ app/src/main/java/com/yangfei/xingmu/
 │       └── SubscriptionApi.kt   订阅拉取（含多仓识别）
 ├── vm/AppViewModel.kt           全局状态（StateFlow）
 └── ui/
-    ├── XingmuApp.kt             根组合 + 三层路由
+    ├── FeigeMediaApp.kt             根组合 + 三层路由
     ├── component/               焦点容器、海报卡、轨道、网格、大图位
     ├── shell/AppShell.kt        手机底部栏 / 平板侧栏 / 电视轨道
     └── home / category / live / search / library / detail / player / settings
@@ -82,4 +82,6 @@ export ANDROID_HOME=/Users/fei.yang/tools/android-sdk
 ## 当前状态
 
 已完成：三形态导航、首页、分类、详情、播放器、直播、搜索、收藏历史、订阅管理。
-未接入：本地 Spider 运行时、网页解析播放、EPG 节目单、跨源搜索、投屏。
+已接入 DLNA 投屏：播放时点击「投屏」，选择同一局域网内已开启 DLNA 的电视或盒子；可在手机上暂停、继续、快进、快退或结束投屏。电视直接请求播放地址，依赖特殊请求头的视频、电视不支持的格式可能无法播放。
+
+未接入：本地 Spider 运行时、网页解析播放、EPG 节目单、跨源搜索。

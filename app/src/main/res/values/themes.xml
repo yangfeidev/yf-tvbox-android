@@ -2,13 +2,13 @@
 <resources>
     <!-- Compose 负责全部界面绘制，这里只保证启动瞬间的窗口背景是深色，
          避免冷启动时闪一下白屏 -->
-    <style name="Theme.Xingmu" parent="@android:style/Theme.Material.NoActionBar">
+    <style name="Theme.FeigeMedia" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@drawable/splash_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:colorAccent">@color/accent</item>
     </style>
-    <style name="Theme.Xingmu.Starting" parent="Theme.Xingmu">
+    <style name="Theme.FeigeMedia.Starting" parent="Theme.FeigeMedia">
         <item name="android:windowBackground">@drawable/splash_background</item>
     </style>
 </resources>

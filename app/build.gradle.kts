@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.yangfei.xingmu"
+    namespace = "me.bsdnme.tvbox"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.yangfei.xingmu"
+        applicationId = "me.bsdnme.tvbox"
         // 21 起 ExoPlayer 与 Compose 均可运行；24 起省掉一批兼容分支，
         // 老盒子（4.4）如果需要支持再单独降级评估
         minSdk = 24

@@ -26,5 +26,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Xingmu"
+rootProject.name = "FeigeMedia"
 include(":app")

@@ -1,0 +1,181 @@
+package me.bsdnme.tvbox.ui
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import android.app.Activity
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import me.bsdnme.tvbox.core.theme.FormFactor
+import me.bsdnme.tvbox.core.theme.XColors
+import me.bsdnme.tvbox.data.model.MediaItem
+import me.bsdnme.tvbox.data.model.Site
+import me.bsdnme.tvbox.ui.category.CategoryCache
+import me.bsdnme.tvbox.ui.category.CategoryScreen
+import me.bsdnme.tvbox.ui.detail.DetailScreen
+import me.bsdnme.tvbox.ui.home.HomeScreen
+import me.bsdnme.tvbox.ui.home.HomeSnapshot
+import me.bsdnme.tvbox.ui.library.LibraryScreen
+import me.bsdnme.tvbox.ui.live.LiveScreen
+import me.bsdnme.tvbox.ui.player.PlaybackRequest
+import me.bsdnme.tvbox.ui.player.PlayerScreen
+import me.bsdnme.tvbox.ui.search.SearchScreen
+import me.bsdnme.tvbox.ui.settings.SettingsScreen
+import me.bsdnme.tvbox.ui.shell.AppShell
+import me.bsdnme.tvbox.ui.shell.Tab
+import me.bsdnme.tvbox.vm.AppViewModel
+
+/**
+ * 应用根组合。
+ *
+ * 路由没有引入 navigation-compose：层级只有「Tab 页 → 详情 → 播放」三层，
+ * 用一个可空状态变量表达反而更直观，也少一个版本依赖。
+ *
+ * 层叠顺序：Shell（含系统栏内边距）→ 详情（全屏）→ 播放（全屏，最上层）。
+ * 系统栏内边距只加在 Shell 上，播放器要铺满整屏，不能被状态栏挤下去。
+ */
+@Composable
+fun FeigeMediaApp(formFactor: FormFactor) {
+    val vm: AppViewModel = viewModel()
+    val state by vm.state.collectAsStateWithLifecycle()
+
+    var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    val homeCache = remember { mutableMapOf<Site, HomeSnapshot>() }
+    val categoryCache = remember { CategoryCache() }
+    var focusHomeRequest by remember { mutableStateOf(0) }
+    var detailTarget by remember { mutableStateOf<Pair<Site, MediaItem>?>(null) }
+    var resumeFromHome by remember { mutableStateOf(false) }
+    var playback by remember { mutableStateOf<PlaybackRequest?>(null) }
+    var searchVisible by remember { mutableStateOf(false) }
+    var confirmExit by remember { mutableStateOf(false) }
+    val activity = LocalContext.current as? Activity
+    BackHandler(enabled = playback == null && detailTarget == null && !searchVisible && !confirmExit) {
+        if (tab != Tab.Home) tab = Tab.Home else confirmExit = true
+    }
+    if (confirmExit) {
+        AlertDialog(
+            onDismissRequest = { confirmExit = false },
+            title = { Text("退出飞哥影视仓？") },
+            text = { Text("确认要退出吗？") },
+            confirmButton = { TextButton(onClick = { confirmExit = false; activity?.finish() }) { Text("退出") } },
+            dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } },
+        )
+    }
+
+    Box(Modifier.fillMaxSize().background(XColors.Background)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars),
+        ) {
+            AppShell(
+                formFactor = formFactor,
+                selected = tab,
+                onSelect = { tab = it },
+                focusHomeRequest = focusHomeRequest,
+            ) { current ->
+                when (current) {
+                    Tab.Home -> HomeScreen(
+                        state = state,
+                        onOpenDetail = { site, item -> detailTarget = site to item },
+                        onResume = { site, item -> resumeFromHome = true; detailTarget = site to item },
+                        onOpenSearch = { searchVisible = true },
+                        onOpenSettings = { tab = Tab.Settings },
+                        cache = homeCache,
+                    )
+
+                    Tab.Category -> CategoryScreen(
+                        state = state,
+                        cache = categoryCache,
+                        onOpenDetail = { site, item -> detailTarget = site to item },
+                        onOpenSearch = { searchVisible = true },
+                    )
+
+                    Tab.Live -> LiveScreen(
+                        state = state,
+                        vm = vm,
+                        onPlayChannel = { channel ->
+                            playback = PlaybackRequest(channel = channel)
+                        },
+                    )
+
+                    Tab.Library -> LibraryScreen(
+                        state = state,
+                        vm = vm,
+                        onOpenDetail = { site, item -> detailTarget = site to item },
+                    )
+
+                    Tab.Settings -> SettingsScreen(state = state, vm = vm, onSiteChanged = {
+                        tab = Tab.Home
+                        focusHomeRequest++
+                    })
+                }
+            }
+        }
+
+        if (searchVisible) {
+            BackHandler(enabled = detailTarget == null && playback == null) { searchVisible = false }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(XColors.Background)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .imePadding(),
+            ) {
+                SearchScreen(
+                    state = state,
+                    onOpenDetail = { site, item -> detailTarget = site to item },
+                    onBack = { searchVisible = false },
+                    isActive = detailTarget == null && playback == null,
+                )
+            }
+        }
+
+        detailTarget?.let { (site, item) ->
+            BackHandler(enabled = playback == null) { detailTarget = null; resumeFromHome = false }
+            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
+                DetailScreen(
+                    vm = vm,
+                    site = site,
+                    item = item,
+                    onBack = { detailTarget = null; resumeFromHome = false },
+                    onPlay = { request -> playback = request },
+                    isActive = playback == null,
+                    autoResume = resumeFromHome,
+                    onAutoResumeHandled = { resumeFromHome = false },
+                )
+            }
+        }
+
+        playback?.let { request ->
+            PlayerScreen(
+                request = request,
+                onClose = { playback = null },
+                onEpisodeChange = { },
+                onProgress = { sourceName, episodeName, progress ->
+                    val site = request.site
+                    val detail = request.detail
+                    if (site != null && detail != null) {
+                        vm.recordHistory(detail.item, site, sourceName, episodeName, progress)
+                    }
+                },
+            )
+        }
+    }
+}
