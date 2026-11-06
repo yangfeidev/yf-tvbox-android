@@ -273,6 +273,47 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                 title = "已添加的订阅",
                 subtitle = "共 ${state.subscriptions.size} 个",
             )
+            // 内置默认订阅被删除（或误删）后的一键恢复入口：
+            // 平时默认订阅在列表里时隐藏，删了才出现，不占空间。
+            // 复用添加逻辑（submit → addSubscription），成功后自动设为当前订阅。
+            if (!state.subscriptions.any { it.url == DefaultSources.BOX }) {
+                Spacer(Modifier.height(10.dp))
+                FocusableSurface(
+                    onClick = { submit(DefaultSources.BOX, "默认单仓") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(XRadii.md),
+                    focusScale = 1.02f,
+                    enabled = !submitting,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.md)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (submitting) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    strokeWidth = 2.dp,
+                                    color = XColors.TextSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("正在恢复默认订阅，可能需要几十秒", style = MaterialTheme.typography.labelLarge, color = XColors.TextSecondary)
+                            }
+                        } else {
+                            Text("恢复默认订阅", style = MaterialTheme.typography.labelLarge, color = XColors.TextPrimary)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "内置单仓（tv.bsdnme.me/box）不在上面的列表里，点按钮一键恢复",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = XColors.TextTertiary,
+                )
+            }
         }
 
         if (state.error != null) {
