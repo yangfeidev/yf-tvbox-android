@@ -96,7 +96,6 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
             when (val result = vm.addSubscription(targetUrl, targetName)) {
                 is AddResult.Success -> {
                     message = "订阅已添加"
-                    url = ""
                     name = ""
                 }
                 is AddResult.NeedWarehouse -> warehouse = result.entries
@@ -181,7 +180,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                     onValueChange = { url = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("https://example.com/tvbox.json") },
+                    placeholder = { Text("输入订阅地址") },
                     shape = RoundedCornerShape(XRadii.pill),
                     colors = fieldColors(),
                 )
@@ -412,7 +411,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                     onValueChange = { liveUrl = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("https://example.com/live.m3u") },
+                    placeholder = { Text("输入直播源地址") },
                     shape = RoundedCornerShape(XRadii.pill),
                     colors = fieldColors(),
                 )
