@@ -97,7 +97,46 @@ WRANGLER_SEND_METRICS=false "$W" r2 object put "$BUCKET/$APP_ID/update.json" \
   --content-type "application/json; charset=utf-8" > /dev/null \
   || fail "update.json 上传失败"
 
+# 固定名 latest.apk：对外分享用的「永远最新版」地址，每次发版覆盖
+echo "→ 上传 $BUCKET/$APP_ID/latest.apk …"
+WRANGLER_SEND_METRICS=false "$W" r2 object put "$BUCKET/$APP_ID/latest.apk" \
+  --file "$APK" --remote \
+  --content-type "application/vnd.android.package-archive" > /dev/null \
+  || fail "latest.apk 上传失败"
+
 echo
 echo "✔ 发布完成 v$VERSION_NAME ($VERSION_CODE)"
 echo "  $DL_BASE/$APP_ID/update.json"
 echo "  $DL_BASE/$APP_ID/$APK_NAME"
+
+# ── 5. 清理历史 APK（按上传时间保留最近 KEEP_APK_COUNT 个，update.json 不动）──
+KEEP_APK_COUNT="${KEEP_APK_COUNT:-2}"
+ACCOUNT_ID="a8dd0cd54cec86b3c5d64bdc3136ab16"
+TOKEN=$(grep '^oauth_token' "$HOME/Library/Preferences/.wrangler/config/default.toml" | cut -d'"' -f2)
+OLD_KEYS=$(curl -s "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/r2/buckets/$BUCKET/objects?per_page=1000" \
+  -H "Authorization: Bearer $TOKEN" | python3 -c '
+import json, sys
+bucket, app_id, keep = sys.argv[1], sys.argv[2], int(sys.argv[3])
+d = json.load(sys.stdin)
+objs = d.get("result") or []
+apks = sorted(
+    (o for o in objs if o["key"].startswith(app_id + "/")
+        and o["key"].endswith(".apk") and not o["key"].endswith("/latest.apk")),
+    key=lambda o: o.get("last_modified", ""),
+    reverse=True,
+)
+for o in apks[keep:]:
+    print(o["key"])
+' "$BUCKET" "$APP_ID" "$KEEP_APK_COUNT")
+
+if [ -n "$OLD_KEYS" ]; then
+  echo "→ 清理旧版本 APK（保留最近 $KEEP_APK_COUNT 个）…"
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    if WRANGLER_SEND_METRICS=false "$W" r2 object delete "$BUCKET/$key" --remote > /dev/null 2>&1; then
+      echo "  已删除 $key"
+    else
+      echo "  ⚠ 删除失败（不影响发布）: $key"
+    fi
+  done <<< "$OLD_KEYS"
+fi
