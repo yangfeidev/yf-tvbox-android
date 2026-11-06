@@ -128,7 +128,7 @@ update.json 结构：
 ./scripts/release.sh "重要安全更新" 2
 ```
 
-脚本做四件事：读取版本号（versionCode 与上次提交一样时会提醒确认）→ `assembleRelease` 签名构建 → 生成 update.json → 上传 R2。
+脚本做五件事：读取版本号（versionCode 与上次提交一样时会提醒确认）→ `assembleRelease` 签名构建 → 生成 update.json → 上传 R2 → **自动清理历史 APK（默认保留最近 2 个，`KEEP_APK_COUNT` 变量可调）**。
 
 ### 签名
 
