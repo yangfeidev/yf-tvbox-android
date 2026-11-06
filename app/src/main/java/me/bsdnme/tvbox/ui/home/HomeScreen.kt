@@ -215,7 +215,8 @@ fun HomeScreen(
                     SectionTitle("继续观看", modifier = Modifier.padding(horizontal = formFactor.horizontalPadding))
                     Spacer(Modifier.height(4.dp))
                     LazyRow(
-                        modifier = Modifier.fillMaxWidth().height(cardWidth * 1.5f + 56.dp),
+                        // 不写死高度，避免副标题被视口裁掉（同 MediaRail）
+                        modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = formFactor.horizontalPadding, vertical = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {

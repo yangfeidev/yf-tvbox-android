@@ -38,8 +38,9 @@ fun MediaRail(
     val formFactor = LocalFormFactor.current
     val horizontalPadding = formFactor.horizontalPadding
     val cardWidth = railCardWidth(formFactor)
-    // 海报 2:3 + 标题两行 + 焦点溢出
-    val railHeight = cardWidth * 1.5f + 56.dp
+    // 注意：不写死轨道高度。写死的话，海报(1.5x宽) + 标题 + 副标题的文本
+    // 预算一旦不足，副标题下半就会被 LazyRow 视口裁掉；
+    // 自适应高度时，上下 contentPadding(12dp) 仍足以容纳焦点放大 1.08 倍的溢出。
 
     Column(modifier = modifier.fillMaxWidth()) {
         SectionTitle(
@@ -56,9 +57,7 @@ fun MediaRail(
             )
         } else {
             LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(railHeight),
+                modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {

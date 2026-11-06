@@ -427,60 +427,106 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
             SectionTitle(title = "关于")
         }
         item {
-            Column(Modifier.fillMaxWidth().background(XColors.Surface, RoundedCornerShape(XRadii.lg)).padding(16.dp)) {
-                BrandMark()
-                Spacer(Modifier.height(12.dp))
-                // 版本号从 PackageManager 读取，发版改 build.gradle.kts 后这里自动跟上
+            // 关于卡片：品牌行 / 操作行 / 声明 三段式，间距统一用 12dp 分组
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(XColors.Surface, RoundedCornerShape(XRadii.lg))
+                    .padding(16.dp),
+            ) {
+                // 品牌行：左 Logo + 名称，右版本号（从 PackageManager 读取，发版改 build.gradle.kts 后自动跟上）
                 val context = LocalContext.current
-                Text(
-                    "飞哥影视仓 v${UpdateCenter.currentVersionName(context)} (${UpdateCenter.currentVersionCode(context)})",
-                    style = MaterialTheme.typography.bodySmall,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BrandMark(modifier = Modifier.weight(1f))
+                    Text(
+                        "v${UpdateCenter.currentVersionName(context)} (${UpdateCenter.currentVersionCode(context)})",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = XColors.TextSecondary,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(XColors.Divider),
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(12.dp))
+                // 操作行：两个等宽按钮并排，主操作实底、次操作弱底色
                 // 手动检查更新：发现新版本由全局弹窗接管，这里只展示文字结果
                 var checkingUpdate by remember { mutableStateOf(false) }
                 var updateMessage by remember { mutableStateOf<String?>(null) }
-                FocusableSurface(
-                    onClick = {
-                        if (checkingUpdate) return@FocusableSurface
-                        scope.launch {
-                            checkingUpdate = true
-                            updateMessage = null
-                            updateMessage = UpdateCenter.manualCheck(context)
-                            checkingUpdate = false
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FocusableSurface(
+                        onClick = {
+                            if (checkingUpdate) return@FocusableSurface
+                            scope.launch {
+                                checkingUpdate = true
+                                updateMessage = null
+                                updateMessage = UpdateCenter.manualCheck(context)
+                                checkingUpdate = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(XRadii.md),
+                        focusScale = 1.02f,
+                        showBorder = false,
+                        enabled = !checkingUpdate,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(40.dp)
+                                .background(XColors.Accent, RoundedCornerShape(XRadii.md)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (checkingUpdate) {
+                                    CircularProgressIndicator(
+                                        strokeWidth = 2.dp,
+                                        color = XColors.OnAccent,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(
+                                    if (checkingUpdate) "检查中…" else "检查更新",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = XColors.OnAccent,
+                                )
+                            }
                         }
-                    },
-                    shape = RoundedCornerShape(XRadii.pill),
-                    focusScale = 1.02f,
-                ) {
-                    Text(
-                        if (checkingUpdate) "检查中…" else "检查更新",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = XColors.Accent,
-                    )
+                    }
+                    FocusableSurface(
+                        onClick = { runCatching { uriHandler.openUri("https://bsdnme.me/") } },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(XRadii.md),
+                        focusScale = 1.02f,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(40.dp)
+                                .background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.md)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "个人网站 bsdnme.me",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = XColors.TextPrimary,
+                            )
+                        }
+                    }
                 }
                 if (updateMessage != null) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                     InlineNotice(updateMessage!!)
                 }
-                Spacer(Modifier.height(8.dp))
-                FocusableSurface(
-                    onClick = { runCatching { uriHandler.openUri("https://bsdnme.me/") } },
-                    shape = RoundedCornerShape(XRadii.pill),
-                    focusScale = 1.02f,
-                ) {
-                    Text(
-                        "个人网站 · bsdnme.me",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = XColors.Accent,
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(12.dp))
                 Text(
                     "本应用不内置任何内容源，所有内容均来自你自行添加的订阅地址。",
                     style = MaterialTheme.typography.bodySmall,
+                    color = XColors.TextTertiary,
                 )
             }
         }
