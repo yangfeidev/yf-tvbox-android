@@ -9,12 +9,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ImageNotSupported
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,6 +60,7 @@ fun PosterCard(
     width: Dp? = null,
     progress: Float? = null,
     showMeta: Boolean = true,
+    subtitle: String? = null,
 ) {
     val cardModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
     FocusableSurface(
@@ -117,7 +119,7 @@ fun PosterCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val meta = listOfNotNull(
+                val meta = subtitle ?: listOfNotNull(
                     item.year.takeIf { it.isNotBlank() },
                     item.categoryName.takeIf { it.isNotBlank() },
                 ).joinToString(" · ")
@@ -155,12 +157,15 @@ fun PosterImage(url: String, name: String, modifier: Modifier = Modifier) {
         if (failed) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(XColors.PosterHighlight, XColors.Background))))
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
-                BrandMark(size = 36.dp, showName = false)
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = XColors.TextSecondary.copy(alpha = 0.48f),
+                    modifier = Modifier.size(48.dp),
+                )
                 Spacer(Modifier.height(12.dp))
                 Text(name, style = MaterialTheme.typography.titleSmall, color = XColors.TextPrimary, maxLines = 2,
                     overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                Spacer(Modifier.height(6.dp))
-                Text(if (url.isBlank()) "暂无海报" else "图片加载失败", style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary, maxLines = 1)
             }
         }
     }

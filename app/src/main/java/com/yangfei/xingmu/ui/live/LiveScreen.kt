@@ -215,7 +215,7 @@ private fun PhoneLayout(
                 )
             }
         }
-        PullToRefreshBox(indicator = {}, isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
+        PullToRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
             when {
                 loading && groups.isEmpty() -> LiveLoading()
                 error != null -> EmptyState(
@@ -294,7 +294,7 @@ private fun WideLayout(
                 }
             }
         }
-        PullToRefreshBox(indicator = {}, isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
+        PullToRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
             when {
                 loading && groups.isEmpty() -> LiveLoading()
                 error != null -> EmptyState(

@@ -29,11 +29,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.yangfei.xingmu.R
 import com.yangfei.xingmu.core.theme.FormFactor
 import com.yangfei.xingmu.core.theme.XColors
 import com.yangfei.xingmu.core.theme.XRadii
@@ -51,14 +57,13 @@ import com.yangfei.xingmu.ui.component.BrandMark
  */
 enum class Tab(
     val label: String,
-    val icon: ImageVector,
-    val selectedIcon: ImageVector,
+    val icon: Int,
 ) {
-    Home("首页", Icons.Outlined.Home, Icons.Filled.Home),
-    Category("分类", Icons.Outlined.Category, Icons.Filled.Category),
-    Live("直播", Icons.Outlined.LiveTv, Icons.Filled.LiveTv),
-    Library("我的", Icons.Outlined.BookmarkBorder, Icons.Filled.Bookmark),
-    Settings("设置", Icons.Outlined.Settings, Icons.Filled.Settings),
+    Home("首页", R.drawable.nav_home),
+    Category("分类", R.drawable.nav_category),
+    Live("直播", R.drawable.nav_live),
+    Library("我的", R.drawable.nav_library),
+    Settings("设置", R.drawable.nav_settings),
 }
 
 @Composable
@@ -66,12 +71,13 @@ fun AppShell(
     formFactor: FormFactor,
     selected: Tab,
     onSelect: (Tab) -> Unit,
+    focusHomeRequest: Int = 0,
     content: @Composable (Tab) -> Unit,
 ) {
     when (formFactor) {
         FormFactor.Phone -> PhoneShell(selected, onSelect, content)
-        FormFactor.Tablet -> SidebarShell(selected, onSelect, content, wide = true)
-        FormFactor.Television -> SidebarShell(selected, onSelect, content, wide = false)
+        FormFactor.Tablet -> SidebarShell(selected, onSelect, content, wide = true, focusHomeRequest = focusHomeRequest)
+        FormFactor.Television -> SidebarShell(selected, onSelect, content, wide = false, focusHomeRequest = focusHomeRequest)
     }
 }
 
@@ -109,7 +115,7 @@ private fun BottomItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val color = if (selected) XColors.Accent else XColors.TextSecondary
+    val color = if (selected) Color(0xFF2FE0D2) else XColors.TextSecondary
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -129,7 +135,7 @@ private fun BottomItem(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Icon(
-                    if (selected) tab.selectedIcon else tab.icon,
+                    painterResource(tab.icon),
                     contentDescription = tab.label,
                     tint = color,
                     modifier = Modifier.size(21.dp),
@@ -147,7 +153,12 @@ private fun SidebarShell(
     onSelect: (Tab) -> Unit,
     content: @Composable (Tab) -> Unit,
     wide: Boolean,
+    focusHomeRequest: Int,
 ) {
+    val homeFocus = remember { FocusRequester() }
+    LaunchedEffect(focusHomeRequest, wide) {
+        if (!wide && focusHomeRequest > 0) runCatching { homeFocus.requestFocus() }
+    }
     val railWidth = if (wide) 200.dp else 96.dp
     Row(Modifier.fillMaxSize().background(XColors.Background)) {
         Column(
@@ -173,7 +184,8 @@ private fun SidebarShell(
                     wide = wide,
                     onClick = { onSelect(tab) },
                     onFocus = { if (!wide && tab != selected) onSelect(tab) },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp)
+                        .then(if (tab == Tab.Home) Modifier.focusRequester(homeFocus) else Modifier),
                 )
             }
         }
@@ -190,7 +202,7 @@ private fun RailItem(
     onFocus: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val color = if (selected) XColors.Accent else XColors.TextSecondary
+    val color = if (selected) Color(0xFF2FE0D2) else XColors.TextSecondary
     FocusableSurface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocus() },
@@ -202,7 +214,7 @@ private fun RailItem(
                 .fillMaxWidth()
                 .height(48.dp)
                 .background(
-                    if (selected) XColors.Accent.copy(alpha = 0.12f) else XColors.RailBackground,
+                    if (selected) Color(0xFF2FE0D2).copy(alpha = 0.14f) else XColors.RailBackground,
                     RoundedCornerShape(XRadii.md),
                 )
                 .padding(horizontal = if (wide) 14.dp else 0.dp),
@@ -210,7 +222,7 @@ private fun RailItem(
             horizontalArrangement = if (wide) Arrangement.Start else Arrangement.Center,
         ) {
             Icon(
-                if (selected) tab.selectedIcon else tab.icon,
+                painterResource(tab.icon),
                 contentDescription = tab.label,
                 tint = color,
                 modifier = Modifier.size(20.dp),

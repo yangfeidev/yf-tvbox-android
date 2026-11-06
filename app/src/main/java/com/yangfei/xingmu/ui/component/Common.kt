@@ -50,6 +50,7 @@ fun EmptyState(
     modifier: Modifier = Modifier,
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
+    actionModifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
@@ -80,6 +81,7 @@ fun EmptyState(
             Spacer(Modifier.height(XSpacing.xl))
             FocusableSurface(
                 onClick = onAction,
+                modifier = actionModifier,
                 shape = RoundedCornerShape(XRadii.pill),
                 focusScale = 1.04f,
                 showBorder = false,

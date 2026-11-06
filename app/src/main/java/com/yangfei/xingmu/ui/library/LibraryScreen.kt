@@ -18,6 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,6 +58,14 @@ fun LibraryScreen(
     val formFactor = LocalFormFactor.current
     val padding = formFactor.horizontalPadding
     var showHistory by remember { mutableStateOf(false) }
+    var unavailable by remember { mutableStateOf(false) }
+
+    if (unavailable) AlertDialog(
+        onDismissRequest = { unavailable = false },
+        title = { Text("原片源不可用") },
+        text = { Text("请切换回原来的订阅，或重新添加该片源后再打开。") },
+        confirmButton = { TextButton(onClick = { unavailable = false }) { Text("知道了") } },
+    )
 
     val entries = if (showHistory) state.history else state.favorites
     val site = state.currentSite
@@ -121,7 +131,7 @@ fun LibraryScreen(
                                 progress = entry.progress.takeIf { it > 0f },
                                 onClick = {
                                     val originalSite = state.usableSites.firstOrNull { it.key == entry.siteKey }
-                                    (originalSite ?: site)?.let { onOpenDetail(it, entry.toMediaItem()) }
+                                    if (originalSite != null) onOpenDetail(originalSite, entry.toMediaItem()) else unavailable = true
                                 },
                             )
                             Spacer(Modifier.height(6.dp))
@@ -129,29 +139,20 @@ fun LibraryScreen(
                         }
                     }
                 }
-            } else if (site == null) {
-                EmptyState(
-                    icon = Icons.Outlined.BookmarkBorder,
-                    title = "当前没有可用源站",
-                    description = "收藏记录还在，添加订阅后即可打开",
-                )
             } else {
-                MediaGrid(
-                    items = entries.map { it.toMediaItem() },
-                    onItemClick = { item ->
-                        val entry = entries.firstOrNull { it.mediaId == item.id }
-                        val originalSite = state.usableSites.firstOrNull { it.key == entry?.siteKey }
-                        onOpenDetail(originalSite ?: site, item)
-                    },
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(formFactor.gridColumns),
                     contentPadding = PaddingValues(horizontal = padding, vertical = 16.dp),
-                    progressProvider = { item ->
-                        if (!showHistory) {
-                            null
-                        } else {
-                            entries.firstOrNull { it.mediaId == item.id }?.progress?.takeIf { it > 0f }
-                        }
-                    },
-                )
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    items(entries, key = { it.uniqueKey }) { entry ->
+                        PosterCard(item = entry.toMediaItem(), onClick = {
+                            val originalSite = state.usableSites.firstOrNull { it.key == entry.siteKey }
+                            if (originalSite != null) onOpenDetail(originalSite, entry.toMediaItem()) else unavailable = true
+                        })
+                    }
+                }
             }
         }
     }

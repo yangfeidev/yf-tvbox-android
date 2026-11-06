@@ -3,6 +3,9 @@ package com.yangfei.xingmu.data.net
 import com.yangfei.xingmu.data.model.Site
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.RecordedRequest
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -75,13 +78,15 @@ class RemoteSpiderTest {
             val site = Site("cms", "cms", server.url("/vod").toString(), 1, true, true)
             val categories = VodParser.parseList("""{"class":[{"type_id":"1","type_name":"电影"},{"type_id":"2","type_name":"恐怖片","type_pid":1},{"type_id":"3","type_name":"喜剧片","type_pid":1}]}""", true).categories
             assertEquals("1", categories[1].parentId)
-            server.enqueue(MockResponse().setBody("""{"page":1,"pagecount":2,"list":[{"vod_id":"a","vod_name":"影片"}]}"""))
-            server.enqueue(MockResponse().setBody("""{"page":1,"pagecount":1,"list":[{"vod_id":"a","vod_name":"影片"},{"vod_id":"b","vod_name":"喜剧"}]}"""))
-            val page = VodApi.listChildren(site, "1", categories, 1)
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = if (request.requestUrl?.queryParameter("t") == "2")
+                    MockResponse().setBody("""{"page":1,"pagecount":2,"list":[{"vod_id":"a","vod_name":"影片"}]}""")
+                else MockResponse().setBody("""{"page":1,"pagecount":1,"list":[{"vod_id":"a","vod_name":"影片"},{"vod_id":"b","vod_name":"喜剧"}]}""")
+            }
+            val page = runBlocking { VodApi.listChildren(site, "1", categories, 1) }
             assertEquals(listOf("a", "b"), page.items.map { it.id })
             assertEquals(2, page.pageCount)
-            assertEquals("2", server.takeRequest().requestUrl!!.queryParameter("t"))
-            assertEquals("3", server.takeRequest().requestUrl!!.queryParameter("t"))
+            assertEquals(setOf("2", "3"), setOf(server.takeRequest().requestUrl!!.queryParameter("t"), server.takeRequest().requestUrl!!.queryParameter("t")))
         } finally { server.shutdown() }
     }
 }

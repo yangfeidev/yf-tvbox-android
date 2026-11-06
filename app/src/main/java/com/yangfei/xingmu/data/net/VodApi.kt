@@ -7,6 +7,10 @@ import com.yangfei.xingmu.data.model.Site
 import com.yangfei.xingmu.data.model.MediaItem
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * 源站 API 访问层。
@@ -51,7 +55,7 @@ object VodApi {
     }
 
     /** 有些 CMS 的父分类不含视频，仅子分类有内容。 */
-    fun listChildren(site: Site, parentId: String, categories: List<Category>, page: Int): PagedMedia {
+    suspend fun listChildren(site: Site, parentId: String, categories: List<Category>, page: Int): PagedMedia {
         val descendants = mutableListOf<Category>()
         val visited = mutableSetOf(parentId)
         fun collect(id: String) {
@@ -62,7 +66,11 @@ object VodApi {
         }
         collect(parentId)
         if (descendants.isEmpty()) return PagedMedia(page = page)
-        val pages = descendants.map { list(site, it.typeId, page) }
+        val pages = coroutineScope {
+            descendants.chunked(4).flatMap { batch ->
+                batch.map { category -> async(Dispatchers.IO) { list(site, category.typeId, page) } }.awaitAll()
+            }
+        }
         return PagedMedia(
             items = pages.flatMap { it.items }.distinctBy { it.id },
             page = page,

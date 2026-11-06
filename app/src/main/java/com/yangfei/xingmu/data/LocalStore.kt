@@ -93,6 +93,15 @@ class LocalStore(context: Context) {
 
     fun saveHistory(list: List<LibraryEntry>) = saveEntries(KEY_HISTORY, list)
 
+    fun loadSearchHistory(): List<String> = runCatching {
+        val array = JSONArray(prefs.getString("search_history", "[]"))
+        (0 until array.length()).map { array.optString(it) }.filter { it.isNotBlank() }
+    }.getOrDefault(emptyList())
+
+    fun saveSearchHistory(list: List<String>) {
+        prefs.edit().putString("search_history", JSONArray(list).toString()).apply()
+    }
+
     private fun loadEntries(key: String): List<LibraryEntry> {
         val raw = prefs.getString(key, null) ?: return emptyList()
         return runCatching {

@@ -2,6 +2,7 @@ package com.yangfei.xingmu.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,12 +13,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,12 +51,17 @@ import com.yangfei.xingmu.ui.component.FocusableSurface
 import com.yangfei.xingmu.ui.component.GridSkeleton
 import com.yangfei.xingmu.ui.component.HeroBanner
 import com.yangfei.xingmu.ui.component.MediaRail
+import com.yangfei.xingmu.ui.component.PosterCard
+import com.yangfei.xingmu.ui.component.SectionTitle
+import com.yangfei.xingmu.ui.component.railCardWidth
 import com.yangfei.xingmu.vm.AppUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+
+data class HomeSnapshot(val latest: List<MediaItem>, val rails: List<Pair<Category, List<MediaItem>>>, val savedAt: Long)
 
 /**
  * 首页。
@@ -73,19 +82,29 @@ fun HomeScreen(
     onOpenDetail: (Site, MediaItem) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
+    cache: MutableMap<Site, HomeSnapshot>,
 ) {
     val formFactor = LocalFormFactor.current
     val site = state.currentSite
 
-    var loading by remember { mutableStateOf(false) }
+    val cached = site?.let { cache[it]?.takeIf { entry -> System.currentTimeMillis() - entry.savedAt < 5 * 60_000 } }
+    var loading by remember { mutableStateOf(cached == null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var latest by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    var rails by remember { mutableStateOf<List<Pair<Category, List<MediaItem>>>>(emptyList()) }
+    var latest by remember { mutableStateOf(cached?.latest.orEmpty()) }
+    var rails by remember { mutableStateOf(cached?.rails.orEmpty()) }
     var loadGeneration by remember { mutableIntStateOf(0) }
 
     var reloadKey by remember { mutableIntStateOf(0) }
     LaunchedEffect(site, reloadKey) {
         val current = site ?: return@LaunchedEffect
+        val previous = cache[current]?.takeIf { System.currentTimeMillis() - it.savedAt < 5 * 60_000 }
+        if (reloadKey == 0 && previous != null) {
+            latest = previous.latest
+            rails = previous.rails
+            error = null
+            loading = false
+            return@LaunchedEffect
+        }
         val generation = ++loadGeneration
         loading = true
         error = null
@@ -108,6 +127,7 @@ fun HomeScreen(
             }
             if (latest.isEmpty()) latest = rails.firstOrNull()?.second.orEmpty()
             if (latest.isEmpty()) error = "该源没有返回内容，换一个源试试"
+            else cache[current] = HomeSnapshot(latest, rails, System.currentTimeMillis())
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -118,6 +138,16 @@ fun HomeScreen(
     }
 
     if (site == null) {
+        if (state.initializing) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = XColors.Accent)
+                    Spacer(Modifier.height(12.dp))
+                    Text("正在加载订阅")
+                }
+            }
+            return
+        }
         EmptyState(
             icon = Icons.Outlined.Search,
             title = "还没有可用的订阅",
@@ -128,10 +158,15 @@ fun HomeScreen(
         return
     }
 
-    PullToRefreshBox(indicator = {}, isRefreshing = loading, onRefresh = { reloadKey++ }, modifier = Modifier.fillMaxSize()) {
+    PullToRefreshBox(isRefreshing = loading, onRefresh = { reloadKey++ }, modifier = Modifier.fillMaxSize()) {
     if (loading && latest.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
             HomeHeader(site, onOpenSearch, onOpenSettings) { reloadKey++ }
+            Row(Modifier.fillMaxWidth().padding(horizontal = formFactor.horizontalPadding, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(22.dp), color = XColors.Accent, strokeWidth = 2.dp)
+                Spacer(Modifier.size(12.dp))
+                Text("正在加载片源 · ${site.name}", style = MaterialTheme.typography.bodyMedium)
+            }
             GridSkeleton(
                 modifier = Modifier.weight(1f),
                 rows = 3,
@@ -174,15 +209,23 @@ fun HomeScreen(
         val history = state.history.filter { entry -> state.usableSites.any { it.key == entry.siteKey } }.take(10)
         if (history.isNotEmpty()) {
             item {
-                MediaRail(
-                    title = "继续观看",
-                    items = history.map { it.toMediaItem() },
-                    onItemClick = { item ->
-                        val entry = history.firstOrNull { it.mediaId == item.id && it.name == item.name }
-                        val originalSite = state.usableSites.firstOrNull { it.key == entry?.siteKey }
-                        if (originalSite != null) onOpenDetail(originalSite, item)
-                    },
-                )
+                val cardWidth = railCardWidth(formFactor)
+                Column {
+                    SectionTitle("继续观看", modifier = Modifier.padding(horizontal = formFactor.horizontalPadding))
+                    Spacer(Modifier.height(4.dp))
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().height(cardWidth * 1.5f + 56.dp),
+                        contentPadding = PaddingValues(horizontal = formFactor.horizontalPadding, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(history, key = { it.uniqueKey }) { entry ->
+                            val originalSite = state.usableSites.firstOrNull { it.key == entry.siteKey }
+                            PosterCard(item = entry.toMediaItem(), width = cardWidth,
+                                subtitle = originalSite?.let { "片源 · ${it.name}" } ?: "片源不可用",
+                                onClick = { if (originalSite != null) onOpenDetail(originalSite, entry.toMediaItem()) })
+                        }
+                    }
+                }
             }
         }
         item {
@@ -191,6 +234,13 @@ fun HomeScreen(
                 items = latest,
                 onItemClick = { item -> onOpenDetail(site, item) },
             )
+        }
+        if (loading) item {
+            Row(Modifier.padding(horizontal = formFactor.horizontalPadding, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp), color = XColors.Accent, strokeWidth = 2.dp)
+                Spacer(Modifier.size(10.dp))
+                Text("正在加载更多分类", style = MaterialTheme.typography.bodySmall)
+            }
         }
         items(rails.size) { index ->
             val (category, items) = rails[index]

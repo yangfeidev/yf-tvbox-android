@@ -28,6 +28,7 @@ import com.yangfei.xingmu.data.model.Site
 import com.yangfei.xingmu.ui.category.CategoryScreen
 import com.yangfei.xingmu.ui.detail.DetailScreen
 import com.yangfei.xingmu.ui.home.HomeScreen
+import com.yangfei.xingmu.ui.home.HomeSnapshot
 import com.yangfei.xingmu.ui.library.LibraryScreen
 import com.yangfei.xingmu.ui.live.LiveScreen
 import com.yangfei.xingmu.ui.player.PlaybackRequest
@@ -53,6 +54,8 @@ fun XingmuApp(formFactor: FormFactor) {
     val state by vm.state.collectAsStateWithLifecycle()
 
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    val homeCache = remember { mutableMapOf<Site, HomeSnapshot>() }
+    var focusHomeRequest by remember { mutableStateOf(0) }
     var detailTarget by remember { mutableStateOf<Pair<Site, MediaItem>?>(null) }
     var playback by remember { mutableStateOf<PlaybackRequest?>(null) }
     var searchVisible by remember { mutableStateOf(false) }
@@ -81,6 +84,7 @@ fun XingmuApp(formFactor: FormFactor) {
                 formFactor = formFactor,
                 selected = tab,
                 onSelect = { tab = it },
+                focusHomeRequest = focusHomeRequest,
             ) { current ->
                 when (current) {
                     Tab.Home -> HomeScreen(
@@ -88,6 +92,7 @@ fun XingmuApp(formFactor: FormFactor) {
                         onOpenDetail = { site, item -> detailTarget = site to item },
                         onOpenSearch = { searchVisible = true },
                         onOpenSettings = { tab = Tab.Settings },
+                        cache = homeCache,
                     )
 
                     Tab.Category -> CategoryScreen(
@@ -109,7 +114,10 @@ fun XingmuApp(formFactor: FormFactor) {
                         onOpenDetail = { site, item -> detailTarget = site to item },
                     )
 
-                    Tab.Settings -> SettingsScreen(state = state, vm = vm)
+                    Tab.Settings -> SettingsScreen(state = state, vm = vm, onSiteChanged = {
+                        tab = Tab.Home
+                        focusHomeRequest++
+                    })
                 }
             }
         }
@@ -126,6 +134,7 @@ fun XingmuApp(formFactor: FormFactor) {
                     state = state,
                     onOpenDetail = { site, item -> detailTarget = site to item },
                     onBack = { searchVisible = false },
+                    isActive = detailTarget == null && playback == null,
                 )
             }
         }

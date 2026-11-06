@@ -29,6 +29,7 @@ import com.yangfei.xingmu.ui.component.PosterCard
 import com.yangfei.xingmu.vm.AppUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
@@ -73,6 +74,7 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit) {
         useChildren = false
         grid.scrollToItem(0)
         try {
+            if (form == FormFactor.Television && selected.isNotBlank()) delay(250)
             val (result, fallback) = withContext(Dispatchers.IO) {
                 val direct = VodApi.list(current, selected, 1)
                 if (selected.isNotBlank() && categories.any { it.parentId == selected }) {
@@ -123,7 +125,7 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit) {
         EmptyState(icon = Icons.Outlined.Inbox, title = "暂无可用源站", description = "请先在设置里添加订阅")
         return
     }
-    PullToRefreshBox(indicator = {}, isRefreshing = loading, onRefresh = { reload++ }, modifier = Modifier.fillMaxSize()) {
+    PullToRefreshBox(isRefreshing = loading, onRefresh = { reload++ }, modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(form.gridColumns), state = grid, modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = form.horizontalPadding, vertical = 8.dp),

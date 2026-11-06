@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Replay10
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -86,6 +87,7 @@ data class PlaybackRequest(
     val detail: MediaDetail? = null,
     val sourceIndex: Int = 0,
     val episodeIndex: Int = 0,
+    val resumeProgress: Float = 0f,
     val channel: Channel? = null,
 ) {
     val isLive: Boolean get() = channel != null
@@ -134,14 +136,23 @@ fun PlayerScreen(
     // 控制条出现时焦点落到播放/暂停主按钮上，遥控器方向键才能在控制条内导航到返回按钮
     val playFocusRequester = remember { FocusRequester() }
     val playerFocusRequester = remember { FocusRequester() }
+    val errorFocusRequester = remember { FocusRequester() }
     var playerHasFocus by remember { mutableStateOf(false) }
     var played by remember { mutableStateOf(false) }
+    var resolving by remember { mutableStateOf(true) }
+    var pendingResume by remember { mutableStateOf(request.resumeProgress.coerceIn(0f, 0.98f)) }
     val currentEpisode by rememberUpdatedState(episodeIndex)
     val progressCallback by rememberUpdatedState(onProgress)
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(true) }
     var playError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(playError) {
+        if (playError != null) {
+            androidx.compose.runtime.withFrameNanos { }
+            runCatching { errorFocusRequester.requestFocus() }
+        }
+    }
 
     val sources = request.detail?.usableSources.orEmpty()
     val episodes = sources.getOrNull(request.sourceIndex)?.episodes.orEmpty()
@@ -158,7 +169,7 @@ fun PlayerScreen(
 
     DisposableEffect(player) {
         onDispose {
-            if (!request.isLive && played) {
+            if (!request.isLive && played && pendingResume == 0f) {
                 val length = player.duration
                 val progress = if (length > 0) (player.currentPosition.toFloat() / length).coerceIn(0f, 1f) else 0f
                 progressCallback?.invoke(episodes.getOrNull(currentEpisode)?.name.orEmpty(), progress)
@@ -226,8 +237,10 @@ fun PlayerScreen(
     LaunchedEffect(rawUrl, request.site, request.sourceIndex) {
         player.stop()
         resolved = null
+        resolving = true
         if (rawUrl.isNullOrBlank()) {
             playError = "没有可播放的地址"
+            resolving = false
             return@LaunchedEffect
         }
         playError = null
@@ -240,7 +253,22 @@ fun PlayerScreen(
             throw e
         } catch (e: Exception) {
             playError = "播放失败：${e.message ?: "解析失败"}"
+        } finally {
+            resolving = false
         }
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY && pendingResume > 0f && player.duration > 0) {
+                    player.seekTo((player.duration * pendingResume).toLong())
+                    pendingResume = 0f
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
 
     LaunchedEffect(resolved) {
@@ -261,7 +289,7 @@ fun PlayerScreen(
             isPlaying = player.isPlaying
             if (player.isPlaying && !played && !request.isLive) {
                 played = true
-                onProgress?.invoke(episodes.getOrNull(episodeIndex)?.name.orEmpty(), 0f)
+                if (pendingResume == 0f) onProgress?.invoke(episodes.getOrNull(episodeIndex)?.name.orEmpty(), if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f)
             }
             delay(500)
         }
@@ -292,7 +320,7 @@ fun PlayerScreen(
         if (request.isLive) return@LaunchedEffect
         while (true) {
             delay(10_000)
-            if (duration > 0) {
+            if (duration > 0 && played && pendingResume == 0f) {
                 onProgress?.invoke(
                     episodes.getOrNull(episodeIndex)?.name.orEmpty(),
                     (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f),
@@ -376,6 +404,14 @@ fun PlayerScreen(
                 },
         )
 
+        if (resolving && playError == null) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = XColors.Accent)
+                Spacer(Modifier.height(12.dp))
+                Text("正在准备播放", color = XColors.TextPrimary)
+            }
+        }
+
         if (playError != null) {
             Box(Modifier.fillMaxSize().background(XColors.VideoBackground.copy(alpha = 0.85f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -385,7 +421,7 @@ fun PlayerScreen(
                         color = XColors.TextSecondary,
                     )
                     Spacer(Modifier.height(16.dp))
-                    FocusableSurface(onClick = onClose, shape = RoundedCornerShape(XRadii.pill)) {
+                    FocusableSurface(onClick = onClose, modifier = Modifier.focusRequester(errorFocusRequester), shape = RoundedCornerShape(XRadii.pill)) {
                         Box(
                             Modifier
                                 .background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.pill))
@@ -422,12 +458,18 @@ fun PlayerScreen(
                 },
                 onPrevious = if (episodes.isNotEmpty() && episodeIndex > 0) {
                     {
+                        if (played && duration > 0) onProgress?.invoke(episodes[episodeIndex].name, (position.toFloat() / duration).coerceIn(0f, 1f))
+                        pendingResume = 0f
+                        played = false
                         episodeIndex -= 1
                         onEpisodeChange?.invoke(episodeIndex)
                     }
                 } else null,
                 onNext = if (episodes.isNotEmpty() && episodeIndex < episodes.size - 1) {
                     {
+                        if (played && duration > 0) onProgress?.invoke(episodes[episodeIndex].name, (position.toFloat() / duration).coerceIn(0f, 1f))
+                        pendingResume = 0f
+                        played = false
                         episodeIndex += 1
                         onEpisodeChange?.invoke(episodeIndex)
                     }

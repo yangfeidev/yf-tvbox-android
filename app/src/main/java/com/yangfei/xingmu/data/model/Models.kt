@@ -156,6 +156,17 @@ data class LibraryEntry(
     val uniqueKey: String get() = "$siteKey::$mediaId"
 }
 
+data class ResumeTarget(val sourceIndex: Int, val episodeIndex: Int, val progress: Float)
+
+fun findResumeTarget(sources: List<PlaySource>, history: LibraryEntry?): ResumeTarget? {
+    if (history == null || history.episodeName.isBlank() || history.progress <= 0f || history.progress >= 0.98f) return null
+    sources.forEachIndexed { sourceIndex, source ->
+        val episodeIndex = source.episodes.indexOfFirst { it.name == history.episodeName }
+        if (episodeIndex >= 0) return ResumeTarget(sourceIndex, episodeIndex, history.progress)
+    }
+    return null
+}
+
 data class AppSettings(
     val forceTelevision: Boolean = false,
     val autoUpdateOnLaunch: Boolean = true,

@@ -36,6 +36,8 @@ data class AppUiState(
     val document: SubscriptionDocument? = null,
     val currentSite: Site? = null,
     val loading: Boolean = false,
+    val initializing: Boolean = true,
+    val refreshingSubscriptionId: String? = null,
     val error: String? = null,
     val favorites: List<LibraryEntry> = emptyList(),
     val history: List<LibraryEntry> = emptyList(),
@@ -93,17 +95,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val active = subscriptions.firstOrNull { it.id == settings.activeSubscriptionId }
             ?: subscriptions.firstOrNull()
         if (active != null) {
-            val cached = store.readSubscriptionCache(active.id)
-            if (cached != null) {
-                runCatching { SubscriptionApi.parse(cached) }
-                    .onSuccess { applyDocument(it) }
+            if (settings.activeSubscriptionId != active.id) {
+                store.activeSubscriptionId = active.id
+                _state.update { it.copy(settings = it.settings.copy(activeSubscriptionId = active.id)) }
             }
-            if (settings.autoUpdateOnLaunch) {
-                viewModelScope.launch { refreshActive(silent = true) }
+            viewModelScope.launch(Dispatchers.IO) {
+                val cached = store.readSubscriptionCache(active.id)?.let { runCatching { SubscriptionApi.parse(it) }.getOrNull() }
+                if (_state.value.settings.activeSubscriptionId == active.id && cached != null) applyDocument(cached)
+                _state.update { it.copy(initializing = false) }
+                if (settings.autoUpdateOnLaunch && _state.value.settings.activeSubscriptionId == active.id) refreshActive(silent = true)
             }
         } else if (settings.autoAddDefault) {
             // 没有任何订阅时静默导入内置单仓；失败不打扰用户，设置页会显示错误
-            viewModelScope.launch { addSubscription(DefaultSources.BOX, "默认单仓") }
+            viewModelScope.launch { addSubscription(DefaultSources.BOX, "默认单仓"); _state.update { it.copy(initializing = false) } }
+        } else {
+            _state.update { it.copy(initializing = false) }
         }
     }
 
@@ -160,6 +166,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (_state.value.settings.activeSubscriptionId == id || next.isEmpty()) {
                 val nextId = next.firstOrNull()?.id.orEmpty()
                 store.activeSubscriptionId = nextId
+                _state.update { it.copy(document = null, currentSite = null, settings = it.settings.copy(activeSubscriptionId = nextId)) }
                 if (nextId.isEmpty()) {
                     _state.update {
                         it.copy(
@@ -169,7 +176,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 } else {
-                    refreshActive()
+                    val cached = store.readSubscriptionCache(nextId)?.let { runCatching { SubscriptionApi.parse(it) }.getOrNull() }
+                    if (cached != null && _state.value.settings.activeSubscriptionId == nextId) applyDocument(cached)
+                    refreshSubscription(nextId)
                 }
             }
         }
@@ -177,29 +186,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun refreshActive(silent: Boolean = false) = refreshSubscription(null, silent)
 
+    fun activateSubscription(id: String) {
+        if (_state.value.settings.activeSubscriptionId == id) return
+        store.activeSubscriptionId = id
+        _state.update { it.copy(document = null, currentSite = null, settings = it.settings.copy(activeSubscriptionId = id)) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val cached = store.readSubscriptionCache(id)?.let { runCatching { SubscriptionApi.parse(it) }.getOrNull() }
+            if (_state.value.settings.activeSubscriptionId != id) return@launch
+            if (cached != null) applyDocument(cached) else refreshSubscription(id)
+        }
+    }
+
     suspend fun refreshSubscription(id: String?, silent: Boolean = false) = withContext(Dispatchers.IO) {
         val current = _state.value
         val targetId = id ?: current.settings.activeSubscriptionId
         val active = current.subscriptions.firstOrNull { it.id == targetId } ?: return@withContext
 
-        if (!silent) _state.update { it.copy(loading = true, error = null) }
+        if (!silent) _state.update { it.copy(loading = true, refreshingSubscriptionId = active.id, error = null) }
         try {
             val raw = com.yangfei.xingmu.data.net.Http.get(active.url)
             val document = SubscriptionApi.parse(raw)
             if (document.isWarehouse) throw SourceException("该地址已变成多仓订阅，请重新添加子仓库")
             store.writeSubscriptionCache(active.id, raw)
-            val next = current.subscriptions.map {
+            val next = _state.value.subscriptions.map {
                 if (it.id == active.id) {
                     it.copy(updatedAt = System.currentTimeMillis(), siteCount = document.sites.size)
                 } else it
             }
             store.saveSubscriptions(next)
-            _state.update { it.copy(subscriptions = next, loading = false, error = null) }
+            _state.update { if (silent) it.copy(subscriptions = next) else it.copy(subscriptions = next, loading = false, refreshingSubscriptionId = null, error = null) }
             if (_state.value.settings.activeSubscriptionId == active.id) applyDocument(document)
         } catch (e: kotlinx.coroutines.CancellationException) {
+            _state.update { if (it.refreshingSubscriptionId == active.id) it.copy(loading = false, refreshingSubscriptionId = null) else it }
             throw e
         } catch (e: Exception) {
-            _state.update { it.copy(loading = false, error = e.message ?: "订阅刷新失败") }
+            if (!silent) _state.update { it.copy(loading = false, refreshingSubscriptionId = null, error = e.message ?: "订阅刷新失败") }
         }
     }
 

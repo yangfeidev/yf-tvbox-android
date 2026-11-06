@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,6 +48,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import com.yangfei.xingmu.data.LocalStore
 import com.yangfei.xingmu.core.theme.LocalFormFactor
 import com.yangfei.xingmu.core.theme.FormFactor
 import com.yangfei.xingmu.core.theme.XColors
@@ -77,19 +80,25 @@ fun SearchScreen(
     state: AppUiState,
     onOpenDetail: (Site, MediaItem) -> Unit,
     onBack: (() -> Unit)? = null,
+    isActive: Boolean = true,
 ) {
     val formFactor = LocalFormFactor.current
     val padding = formFactor.horizontalPadding
     val site = state.currentSite
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val store = remember(context) { LocalStore(context) }
     val inputFocus = remember { FocusRequester() }
     var inputFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(formFactor) {
-        if (formFactor == FormFactor.Television) inputFocus.requestFocus()
+    LaunchedEffect(formFactor, isActive) {
+        if (formFactor == FormFactor.Television && isActive) {
+            androidx.compose.runtime.withFrameNanos { }
+            runCatching { inputFocus.requestFocus() }
+        }
     }
 
     var keyword by remember { mutableStateOf("") }
-    var history by remember { mutableStateOf<List<String>>(emptyList()) }
+    var history by remember { mutableStateOf(store.loadSearchHistory()) }
     var results by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var searched by remember { mutableStateOf(false) }
@@ -97,6 +106,10 @@ fun SearchScreen(
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var lastQuery by remember { mutableStateOf("") }
     var searchGeneration by remember { mutableIntStateOf(0) }
+    var page by remember { mutableIntStateOf(1) }
+    var pageCount by remember { mutableIntStateOf(1) }
+    var moreLoading by remember { mutableStateOf(false) }
+    var moreError by remember { mutableStateOf<String?>(null) }
 
     fun submit(text: String) {
         val current = site ?: return
@@ -105,14 +118,22 @@ fun SearchScreen(
         searchJob?.cancel()
         lastQuery = query
         val generation = ++searchGeneration
+        page = 1
+        pageCount = 1
+        moreLoading = false
+        moreError = null
         searchJob = scope.launch {
             loading = true
             searched = true
             error = null
             results = emptyList()
             history = (listOf(query) + history.filter { it != query }).take(8)
+            store.saveSearchHistory(history)
             try {
-                results = withContext(Dispatchers.IO) { VodApi.search(current, query).items }
+                val found = withContext(Dispatchers.IO) { VodApi.search(current, query) }
+                results = found.items.distinctBy { it.id }
+                page = found.page.coerceAtLeast(1)
+                pageCount = found.pageCount
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -120,6 +141,29 @@ fun SearchScreen(
             } finally {
                 if (generation == searchGeneration) loading = false
             }
+        }
+    }
+
+    fun loadMore() {
+        val current = site ?: return
+        if (moreLoading || page >= pageCount) return
+        val generation = searchGeneration
+        val next = page + 1
+        moreLoading = true
+        moreError = null
+        searchJob = scope.launch {
+            try {
+                val found = withContext(Dispatchers.IO) { VodApi.search(current, lastQuery, next) }
+                if (generation == searchGeneration) {
+                    results = (results + found.items).distinctBy { it.id }
+                    if (found.items.isEmpty() || found.page < next) pageCount = page else {
+                        page = found.page
+                        pageCount = found.pageCount
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { if (generation == searchGeneration) moreError = e.message ?: "加载失败" }
+            finally { if (generation == searchGeneration) moreLoading = false }
         }
     }
 
@@ -162,7 +206,7 @@ fun SearchScreen(
         ) {
             TextField(
                 value = keyword,
-                onValueChange = { keyword = it },
+                onValueChange = { keyword = it; if (it.isBlank()) searched = false },
                 modifier = Modifier.weight(1f)
                     .focusRequester(inputFocus)
                     .onFocusChanged { inputFocused = it.isFocused }
@@ -255,6 +299,16 @@ fun SearchScreen(
                 ) {
                     items(results, key = { it.id + it.name }) { item ->
                         PosterCard(item = item, onClick = { site?.let { onOpenDetail(it, item) } })
+                    }
+                    if (page < pageCount || moreLoading || moreError != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                                if (moreLoading) Text("正在加载更多…") else PillChip(
+                                    label = if (moreError != null) "加载失败，点击重试" else "加载更多",
+                                    selected = false, onClick = { loadMore() },
+                                )
+                            }
+                        }
                     }
                 }
             }

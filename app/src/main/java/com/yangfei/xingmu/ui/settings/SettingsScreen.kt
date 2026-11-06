@@ -68,7 +68,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(state: AppUiState, vm: AppViewModel) {
+fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Unit) {
     val padding = LocalFormFactor.current.horizontalPadding
     val scope = rememberCoroutineScope()
 
@@ -270,7 +270,8 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel) {
                 SubscriptionTile(
                     subscription = state.subscriptions[index],
                     active = state.settings.activeSubscriptionId == state.subscriptions[index].id,
-                    refreshing = state.loading,
+                    refreshing = state.refreshingSubscriptionId == state.subscriptions[index].id,
+                    onActivate = { vm.activateSubscription(state.subscriptions[index].id) },
                     onRefresh = { if (!state.loading) scope.launch { vm.refreshSubscription(state.subscriptions[index].id) } },
                     onRemove = { vm.removeSubscription(state.subscriptions[index].id) },
                 )
@@ -298,7 +299,12 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel) {
                     PillChip(
                         label = site.name,
                         selected = state.currentSite?.key == site.key,
-                        onClick = { vm.selectSite(site) },
+                        onClick = {
+                            if (state.currentSite?.key != site.key) {
+                                vm.selectSite(site)
+                                onSiteChanged()
+                            }
+                        },
                     )
                 }
             }
@@ -412,6 +418,7 @@ private fun SubscriptionTile(
     subscription: Subscription,
     active: Boolean,
     refreshing: Boolean,
+    onActivate: () -> Unit,
     onRefresh: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -436,6 +443,10 @@ private fun SubscriptionTile(
                 "${subscription.siteCount} 个源 · ${relativeTime(subscription.updatedAt)}",
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+        if (!active) {
+            PillChip(label = "启用", selected = false, onClick = onActivate)
+            Spacer(Modifier.width(6.dp))
         }
         PillChip(label = if (refreshing) "更新中…" else "更新", selected = false, onClick = onRefresh)
         Spacer(Modifier.width(6.dp))

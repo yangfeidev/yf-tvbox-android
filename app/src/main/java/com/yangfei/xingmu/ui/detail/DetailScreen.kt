@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.withFrameNanos
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -55,6 +56,7 @@ import com.yangfei.xingmu.data.model.MediaDetail
 import com.yangfei.xingmu.data.model.MediaItem
 import com.yangfei.xingmu.data.model.PlaySource
 import com.yangfei.xingmu.data.model.Site
+import com.yangfei.xingmu.data.model.findResumeTarget
 import com.yangfei.xingmu.data.net.VodApi
 import com.yangfei.xingmu.ui.component.EmptyState
 import com.yangfei.xingmu.ui.component.FocusableSurface
@@ -91,6 +93,8 @@ fun DetailScreen(
     val formFactor = LocalFormFactor.current
     val padding = formFactor.horizontalPadding
     val wide = !formFactor.isPhone
+    val appState by vm.state.collectAsStateWithLifecycle()
+    val history = appState.history.firstOrNull { it.siteKey == site.key && it.mediaId == item.id }
 
     var detail by remember { mutableStateOf<MediaDetail?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -102,6 +106,12 @@ fun DetailScreen(
 
     LaunchedEffect(loading, detail, isActive) {
         if (formFactor.isTv && isActive && !loading && detail != null && error == null) {
+            withFrameNanos { }
+            runCatching { initialFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(loading, error, isActive) {
+        if (formFactor.isTv && isActive && !loading && error != null) {
             withFrameNanos { }
             runCatching { initialFocus.requestFocus() }
         }
@@ -135,10 +145,12 @@ fun DetailScreen(
                     onAction = { reloadKey++ },
                     secondaryActionLabel = "返回",
                     onSecondaryAction = onBack,
+                    actionModifier = Modifier.focusRequester(initialFocus),
                 )
             }
             else -> {
                 val data = detail!!
+                val resume = findResumeTarget(data.usableSources, history)
                 Column(Modifier.fillMaxSize()) {
                     Row(
                         modifier = Modifier
@@ -225,14 +237,16 @@ fun DetailScreen(
                     }
                     BottomBar(
                         favorite = vm.isFavorite(site.key, data.item.id),
+                        playLabel = if (resume != null) "继续播放 · ${history!!.episodeName}" else "立即播放",
                         onToggleFavorite = { vm.toggleFavorite(data.item, site) },
                         onPlay = {
                             onPlay(
                                 PlaybackRequest(
                                     site = site,
                                     detail = data,
-                                    sourceIndex = sourceIndex,
-                                    episodeIndex = 0,
+                                    sourceIndex = resume?.sourceIndex ?: sourceIndex,
+                                    episodeIndex = resume?.episodeIndex ?: 0,
+                                    resumeProgress = resume?.progress ?: 0f,
                                 ),
                             )
                         },
@@ -372,6 +386,7 @@ private fun InfoColumn(
 @Composable
 private fun BottomBar(
     favorite: Boolean,
+    playLabel: String,
     onToggleFavorite: () -> Unit,
     onPlay: () -> Unit,
     padding: androidx.compose.ui.unit.Dp,
@@ -419,7 +434,7 @@ private fun BottomBar(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    "立即播放",
+                    playLabel,
                     style = MaterialTheme.typography.labelLarge,
                     color = XColors.OnAccent,
                 )
