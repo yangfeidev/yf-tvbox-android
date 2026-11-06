@@ -32,12 +32,15 @@ app/src/main/java/me/bsdnme/tvbox/
 │       ├── VodApi.kt            分类 / 列表 / 搜索 / 详情
 │       ├── LiveParser.kt        直播 m3u + txt 解析
 │       ├── LiveApi.kt           直播源加载
-│       └── SubscriptionApi.kt   订阅拉取（含多仓识别）
+│       ├── SubscriptionApi.kt   订阅拉取（含多仓识别）
+│       └── UpdateApi.kt         检查更新：拉取 update.json + 下载 APK
 ├── vm/AppViewModel.kt           全局状态（StateFlow）
 └── ui/
     ├── FeigeMediaApp.kt             根组合 + 三层路由
     ├── component/               焦点容器、海报卡、轨道、网格、大图位
     ├── shell/AppShell.kt        手机底部栏 / 平板侧栏 / 电视轨道
+    ├── update/UpdateCenter.kt   更新流程控制器（状态机 + 下载 + 安装）
+    ├── update/UpdateDialog.kt   更新弹窗（检查中 / 新版本 / 下载进度 / 失败重试）
     └── home / category / live / search / library / detail / player / settings
 ```
 
@@ -83,5 +86,52 @@ export ANDROID_HOME=/Users/fei.yang/tools/android-sdk
 
 已完成：三形态导航、首页、分类、详情、播放器、直播、搜索、收藏历史、订阅管理。
 已接入 DLNA 投屏：播放时点击「投屏」，选择同一局域网内已开启 DLNA 的电视或盒子；可在手机上暂停、继续、快进、快退或结束投屏。电视直接请求播放地址，依赖特殊请求头的视频、电视不支持的格式可能无法播放。
+已接入检查更新：启动静默检查 + 设置页手动检查，发现新版本弹窗提示，下载后拉起系统安装器。版本信息与 APK 托管在 Cloudflare R2（dl.bsdnme.me）。
 
 未接入：本地 Spider 运行时、网页解析播放、EPG 节目单、跨源搜索。
+
+## 检查更新与发版
+
+### 机制
+
+- 版本信息：`https://dl.bsdnme.me/feige-yingshicang/update.json`
+- APK 本体：`https://dl.bsdnme.me/feige-yingshicang/feige-yingshicang-<version>.apk`
+- 托管：Cloudflare R2 共享桶 `dl-apps`（绑定域 dl.bsdnme.me），**所有 App 共用一个桶一个域名，按 App 全拼目录区分**：
+  - `dl.bsdnme.me/<app全拼>/update.json`
+  - `dl.bsdnme.me/<app全拼>/<app全拼>-<版本>.apk`
+  - 新 App 接入：R2 无需任何配置，客户端指向 `<app全拼>/update.json` 即可
+- 比较依据：`versionCode`（Int），`versionName` 仅展示
+- 强制更新：`force: true` 或已安装 `versionCode < minVersionCode`，弹窗不可关闭
+- 启动静默检查失败不打扰；debug 包也会检查（可自行加过滤）
+
+update.json 结构：
+
+```json
+{
+  "versionCode": 3,
+  "versionName": "1.0.2",
+  "minVersionCode": 1,
+  "apkUrl": "https://dl.bsdnme.me/feige-yingshicang/feige-yingshicang-1.0.2.apk",
+  "changelog": "修复xxx；新增xxx",
+  "force": false
+}
+```
+
+### 发版步骤
+
+1. 改 `app/build.gradle.kts` 的 `versionCode`（+1）和 `versionName`
+2. 跑发布脚本（版本号自动读取，只传更新说明）：
+
+```bash
+./scripts/release.sh "修复xxx；新增xxx"
+# 可选第2参数：minVersionCode（默认 1），低于它的已装版本会强制升级
+./scripts/release.sh "重要安全更新" 2
+```
+
+脚本做四件事：读取版本号（versionCode 与上次提交一样时会提醒确认）→ `assembleRelease` 签名构建 → 生成 update.json → 上传 R2。
+
+### 签名
+
+- 密钥：`keystore/feige-release.jks`（不进 git），alias `feige`
+- 密码等配置在 `local.properties`（不进 git），`app/build.gradle.kts` 从中读取
+- **密钥丢失后无法给已安装用户发增量更新，务必备份 keystore + 密码**

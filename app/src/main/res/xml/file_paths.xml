@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 共享路径：更新 APK 的落盘目录（getExternalFilesDir("update")） -->
+<paths>
+    <external-files-path
+        name="update_apk"
+        path="update/" />
+</paths>

@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -53,6 +54,7 @@ import me.bsdnme.tvbox.ui.component.InlineNotice
 import me.bsdnme.tvbox.ui.component.PillChip
 import me.bsdnme.tvbox.ui.component.SectionTitle
 import me.bsdnme.tvbox.ui.component.StatusDot
+import me.bsdnme.tvbox.ui.update.UpdateCenter
 import me.bsdnme.tvbox.vm.AddResult
 import me.bsdnme.tvbox.vm.AppUiState
 import me.bsdnme.tvbox.vm.AppViewModel
@@ -428,8 +430,40 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
             Column(Modifier.fillMaxWidth().background(XColors.Surface, RoundedCornerShape(XRadii.lg)).padding(16.dp)) {
                 BrandMark()
                 Spacer(Modifier.height(12.dp))
-                Text("飞哥影视仓 v1.0.0 (1)", style = MaterialTheme.typography.bodySmall)
+                // 版本号从 PackageManager 读取，发版改 build.gradle.kts 后这里自动跟上
+                val context = LocalContext.current
+                Text(
+                    "飞哥影视仓 v${UpdateCenter.currentVersionName(context)} (${UpdateCenter.currentVersionCode(context)})",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Spacer(Modifier.height(4.dp))
+                // 手动检查更新：发现新版本由全局弹窗接管，这里只展示文字结果
+                var checkingUpdate by remember { mutableStateOf(false) }
+                var updateMessage by remember { mutableStateOf<String?>(null) }
+                FocusableSurface(
+                    onClick = {
+                        if (checkingUpdate) return@FocusableSurface
+                        scope.launch {
+                            checkingUpdate = true
+                            updateMessage = null
+                            updateMessage = UpdateCenter.manualCheck(context)
+                            checkingUpdate = false
+                        }
+                    },
+                    shape = RoundedCornerShape(XRadii.pill),
+                    focusScale = 1.02f,
+                ) {
+                    Text(
+                        if (checkingUpdate) "检查中…" else "检查更新",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = XColors.Accent,
+                    )
+                }
+                if (updateMessage != null) {
+                    Spacer(Modifier.height(8.dp))
+                    InlineNotice(updateMessage!!)
+                }
                 Spacer(Modifier.height(8.dp))
                 FocusableSurface(
                     onClick = { runCatching { uriHandler.openUri("https://bsdnme.me/") } },

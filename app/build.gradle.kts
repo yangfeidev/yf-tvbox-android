@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,10 +16,27 @@ android {
         // 老盒子（4.4）如果需要支持再单独降级评估
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.2"
         // 电视与手机同一个包，靠运行时分流布局
         resourceConfigurations += listOf("zh", "en")
+    }
+
+    signingConfigs {
+        create("release") {
+            // 密钥信息放 local.properties（已被 .gitignore 排除），不进仓库
+            val props = Properties()
+            val file = rootProject.file("local.properties")
+            if (file.exists()) props.load(file.inputStream())
+            val storeFilePath = props.getProperty("release.storeFile")
+            if (storeFilePath != null) {
+                // 路径以工程根目录为基准（local.properties 里写的是 keystore/feige-release.jks）
+                storeFile = rootProject.file(storeFilePath)
+                storePassword = props.getProperty("release.storePassword")
+                keyAlias = props.getProperty("release.keyAlias")
+                keyPassword = props.getProperty("release.keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -31,6 +50,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // 签名信息从 local.properties 读取（见 signingConfigs），
+            // 没配置时不指定签名，产出未签名包
+            if (signingConfigs.getByName("release").storeFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

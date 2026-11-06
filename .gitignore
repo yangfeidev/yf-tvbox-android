@@ -10,3 +10,5 @@ captures/
 *.hprof
 .kotlin
 .workbuddy/
+keystore/
+.cf-cli/

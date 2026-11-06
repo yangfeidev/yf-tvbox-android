@@ -30,6 +30,8 @@ import me.bsdnme.tvbox.core.theme.XColors
 import me.bsdnme.tvbox.ui.component.CreatorSignature
 import kotlinx.coroutines.delay
 import me.bsdnme.tvbox.ui.FeigeMediaApp
+import me.bsdnme.tvbox.ui.update.UpdateCenter
+import me.bsdnme.tvbox.ui.update.UpdateDialogHost
 import me.bsdnme.tvbox.vm.AppViewModel
 
 /**
@@ -64,9 +66,16 @@ class MainActivity : ComponentActivity() {
                         showBrand = false
                     }
                 }
+                // 启动静默检查更新：放在品牌闪屏之后，失败不打扰，有新版本才弹窗
+                LaunchedEffect(Unit) {
+                    delay(2500)
+                    UpdateCenter.silentCheck(applicationContext)
+                }
                 Box(Modifier.fillMaxSize()) {
                     FeigeMediaApp(formFactor = formFactor)
                     if (showBrand) StartupBrand()
+                    // 更新弹窗悬浮在所有页面之上，三端共用
+                    UpdateDialogHost()
                 }
             }
         }
