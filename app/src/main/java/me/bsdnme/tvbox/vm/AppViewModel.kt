@@ -19,8 +19,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,8 +81,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            for (write in libraryWrites) write()
+        // 单写者消费者直接挂在 viewModelScope 上（onCleared 自动取消，无需自管 scope），
+        // 每条写入统一切到 IO 执行，保证收藏 / 历史的落盘按提交顺序串行完成
+        viewModelScope.launch {
+            for (write in libraryWrites) withContext(Dispatchers.IO) { write() }
         }
         viewModelScope.launch { loadLocal() }
     }

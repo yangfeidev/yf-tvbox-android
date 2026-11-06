@@ -4,9 +4,12 @@
 #
 # 流程：读版本号 → 构建 release APK → 生成 update.json → 上传 Cloudflare R2
 # 前置条件：
-#   1. app/build.gradle.kts 里的 versionCode / versionName 已手动改好
-#   2. .cf-cli/ 里有 wrangler（npm install wrangler），且已 wrangler login
-#   3. R2 共享桶已创建并绑定自定义域 dl.bsdnme.me
+#   1. app/build.gradle.kts 里的 versionName 已手动改好
+#      （versionCode 漏改时脚本会询问是否自动 +1）
+#   2. 认证二选一：export CLOUDFLARE_API_TOKEN=<R2 专用 Token>（推荐），
+#      或 .cf-cli/ 里已 wrangler login（全局凭据，权限过大建议迁移）
+#   3. .cf-cli/ 里有 wrangler（npm install wrangler）
+#   4. R2 共享桶已创建并绑定自定义域 dl.bsdnme.me
 #
 # 多 App 约定：所有 App 共用桶 dl-apps 和域名 dl.bsdnme.me，
 # 以 App 全拼做目录前缀区分：
@@ -39,20 +42,47 @@ export ANDROID_HOME="${ANDROID_HOME:-/Users/fei.yang/tools/android-sdk}"
 
 fail() { echo "✘ $1"; exit 1; }
 
+# ── 0. 认证：优先 R2 专用 API Token ──────────────────────────────────────
+# 来源依次为：环境变量 CLOUDFLARE_API_TOKEN → local.properties 的 cloudflare.apiToken
+# （推荐，只授 Account > Cloudflare R2 > Edit 权限）；
+# 都没有时退回 wrangler login 的全局 oauth_token（账号级权限，建议尽快迁移）。
+# 注意：不要把 R2 专用 Token export 进 ~/.zshrc，否则所有 wrangler 命令
+# （Workers / Pages 部署等）都会改用这个权限受限的 Token。
+if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  LOCAL_TOKEN=$(grep -E '^cloudflare\.apiToken=' "$PROJECT_DIR/local.properties" 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]')
+  if [ -n "$LOCAL_TOKEN" ]; then CLOUDFLARE_API_TOKEN="$LOCAL_TOKEN"; fi
+fi
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  export CLOUDFLARE_API_TOKEN
+  echo "→ 认证方式：R2 专用 API Token"
+else
+  echo "⚠ 未配置 R2 专用 Token，使用 wrangler 全局登录凭据（建议在 local.properties 加 cloudflare.apiToken）"
+fi
+
 # ── 1. 从 build.gradle.kts 读取版本号 ─────────────────────────────────────
 VERSION_CODE=$(grep -E '^[[:space:]]*versionCode[[:space:]]*=' "$GRADLE_FILE" | head -1 | tr -dc '0-9')
 VERSION_NAME=$(grep -E '^[[:space:]]*versionName[[:space:]]*=' "$GRADLE_FILE" | head -1 | sed -E 's/[^"]*"([^"]+)".*/\1/')
 [ -n "$VERSION_CODE" ] && [ "$VERSION_CODE" -gt 0 ] 2>/dev/null || fail "没读到有效的 versionCode，检查 app/build.gradle.kts"
 [ -n "$VERSION_NAME" ] || fail "没读到 versionName，检查 app/build.gradle.kts"
 
-# versionCode 没动过就提醒（发了客户端也收不到更新），确认后可继续
+# versionCode 没动过（发了客户端也收不到更新提示）：询问是否自动 +1
 if git -C "$PROJECT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   OLD_CODE=$(git -C "$PROJECT_DIR" show HEAD:app/build.gradle.kts 2>/dev/null | grep -E '^[[:space:]]*versionCode[[:space:]]*=' | head -1 | tr -dc '0-9')
   if [ -n "$OLD_CODE" ] && [ "$VERSION_CODE" = "$OLD_CODE" ]; then
     echo "⚠ versionCode 仍是 $OLD_CODE（和上次提交一样），客户端将收不到更新提示"
-    printf '继续发布？(y/N) '
+    printf '自动 versionCode+1 并继续发布？(y=自动+1 / n=取消) '
     read -r ANSWER
-    [ "$ANSWER" = "y" ] || { echo "已取消"; exit 1; }
+    case "$ANSWER" in
+      y|Y)
+        NEW_CODE=$((OLD_CODE + 1))
+        # 只动 versionCode 那一行，versionName 保持手动管理
+        sed -i '' -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)$OLD_CODE$/\1$NEW_CODE/" "$GRADLE_FILE" \
+          || fail "versionCode 自动 +1 失败，请手动修改后重试"
+        VERSION_CODE=$NEW_CODE
+        echo "  versionCode: $OLD_CODE → $NEW_CODE"
+        ;;
+      *) echo "已取消"; exit 1 ;;
+    esac
   fi
 fi
 
@@ -112,7 +142,12 @@ echo "  $DL_BASE/$APP_ID/$APK_NAME"
 # ── 5. 清理历史 APK（按上传时间保留最近 KEEP_APK_COUNT 个，update.json 不动）──
 KEEP_APK_COUNT="${KEEP_APK_COUNT:-2}"
 ACCOUNT_ID="a8dd0cd54cec86b3c5d64bdc3136ab16"
-TOKEN=$(grep '^oauth_token' "$HOME/Library/Preferences/.wrangler/config/default.toml" | cut -d'"' -f2)
+# 清理用的 REST API 同样优先专用 Token，退回 wrangler 全局 oauth_token
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  TOKEN="$CLOUDFLARE_API_TOKEN"
+else
+  TOKEN=$(grep '^oauth_token' "$HOME/Library/Preferences/.wrangler/config/default.toml" | cut -d'"' -f2)
+fi
 OLD_KEYS=$(curl -s "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/r2/buckets/$BUCKET/objects?per_page=1000" \
   -H "Authorization: Bearer $TOKEN" | python3 -c '
 import json, sys

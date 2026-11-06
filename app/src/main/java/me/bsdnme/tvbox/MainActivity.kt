@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -77,8 +78,12 @@ class MainActivity : ComponentActivity() {
                     UpdateCenter.silentCheck(applicationContext)
                 }
                 Box(Modifier.fillMaxSize()) {
-                    if (state.localLoaded) FeigeMediaApp(formFactor = formFactor)
-                    if (showBrand || !state.localLoaded) StartupBrand()
+                    // 本地数据就绪前停在品牌页，就绪后淡入主页，避免空数据帧闪现
+                    Crossfade(targetState = state.localLoaded, label = "boot") { loaded ->
+                        if (loaded) FeigeMediaApp(formFactor = formFactor) else StartupBrand()
+                    }
+                    // 定时品牌闪屏独立计时，叠在最上层
+                    if (showBrand) StartupBrand()
                     // 更新弹窗悬浮在所有页面之上，三端共用
                     UpdateDialogHost()
                 }
