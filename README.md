@@ -128,7 +128,7 @@ update.json 结构：
 ./scripts/release.sh "重要安全更新" 2
 ```
 
-脚本做五件事：读取版本号（versionCode 与上次提交一样时自动 +1 或取消）→ `assembleRelease` 签名构建 → 生成 update.json → 上传 R2 → **自动清理历史 APK（默认保留最近 2 个，`KEEP_APK_COUNT` 变量可调）**。
+脚本做五件事：读取版本号（未高于线上已发布 versionCode 时自动 +1 或取消）→ `assembleRelease` 签名构建 → 生成 update.json → 上传 R2 → **自动清理历史 APK（默认保留最近 2 个，`KEEP_APK_COUNT` 变量可调）**。
 
 > 认证优先级：环境变量 `CLOUDFLARE_API_TOKEN` → `local.properties` 的 `cloudflare.apiToken`（R2 专用 Token，推荐）→ wrangler 全局登录凭据（兜底）。注意不要把 R2 专用 Token export 进 `~/.zshrc`，否则所有 wrangler 命令（Workers / Pages 部署）都会改用这个受限 Token。
 

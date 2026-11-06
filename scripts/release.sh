@@ -65,25 +65,32 @@ VERSION_NAME=$(grep -E '^[[:space:]]*versionName[[:space:]]*=' "$GRADLE_FILE" | 
 [ -n "$VERSION_CODE" ] && [ "$VERSION_CODE" -gt 0 ] 2>/dev/null || fail "没读到有效的 versionCode，检查 app/build.gradle.kts"
 [ -n "$VERSION_NAME" ] || fail "没读到 versionName，检查 app/build.gradle.kts"
 
-# versionCode 没动过（发了客户端也收不到更新提示）：询问是否自动 +1
-if git -C "$PROJECT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  OLD_CODE=$(git -C "$PROJECT_DIR" show HEAD:app/build.gradle.kts 2>/dev/null | grep -E '^[[:space:]]*versionCode[[:space:]]*=' | head -1 | tr -dc '0-9')
-  if [ -n "$OLD_CODE" ] && [ "$VERSION_CODE" = "$OLD_CODE" ]; then
-    echo "⚠ versionCode 仍是 $OLD_CODE（和上次提交一样），客户端将收不到更新提示"
-    printf '自动 versionCode+1 并继续发布？(y=自动+1 / n=取消) '
-    read -r ANSWER
-    case "$ANSWER" in
-      y|Y)
-        NEW_CODE=$((OLD_CODE + 1))
-        # 只动 versionCode 那一行，versionName 保持手动管理
-        sed -i '' -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)$OLD_CODE$/\1$NEW_CODE/" "$GRADLE_FILE" \
-          || fail "versionCode 自动 +1 失败，请手动修改后重试"
-        VERSION_CODE=$NEW_CODE
-        echo "  versionCode: $OLD_CODE → $NEW_CODE"
-        ;;
-      *) echo "已取消"; exit 1 ;;
-    esac
-  fi
+# versionCode 不高于线上已发布版本（客户端收不到更新提示）：询问是否自动 +1。
+# 基准优先用线上 update.json（真正决定客户端能否收到提示），拉不到再退回上次提交。
+# 注意：变量后不要直接接全角字符（$X（…），set -u 下会被 bash 当成变量名一部分），一律加花括号。
+PUBLISHED_CODE=$(curl -sf --max-time 10 "$DL_BASE/$APP_ID/update.json" 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("versionCode",""))' 2>/dev/null || true)
+if [ -n "$PUBLISHED_CODE" ]; then
+  echo "→ 线上已发布 versionCode：$PUBLISHED_CODE"
+  BASE_CODE="$PUBLISHED_CODE"
+else
+  BASE_CODE=$(git -C "$PROJECT_DIR" show HEAD:app/build.gradle.kts 2>/dev/null | grep -E '^[[:space:]]*versionCode[[:space:]]*=' | head -1 | tr -dc '0-9')
+fi
+if [ -n "$BASE_CODE" ] && [ "$VERSION_CODE" -le "$BASE_CODE" ] 2>/dev/null; then
+  echo "⚠ 当前 versionCode ${VERSION_CODE} 未高于已发布的 ${BASE_CODE}，客户端将收不到更新提示"
+  printf '自动 versionCode+1 并继续发布？(y=自动+1 / n=取消) '
+  read -r ANSWER
+  case "$ANSWER" in
+    y|Y)
+      NEW_CODE=$((BASE_CODE + 1))
+      # 只动 versionCode 那一行，versionName 保持手动管理
+      sed -i '' -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)$BASE_CODE$/\1$NEW_CODE/" "$GRADLE_FILE" \
+        || fail "versionCode 自动 +1 失败，请手动修改后重试"
+      VERSION_CODE=$NEW_CODE
+      echo "  versionCode: ${BASE_CODE} → ${NEW_CODE}"
+      ;;
+    *) echo "已取消"; exit 1 ;;
+  esac
 fi
 
 echo "→ 版本：v$VERSION_NAME (versionCode $VERSION_CODE)"
