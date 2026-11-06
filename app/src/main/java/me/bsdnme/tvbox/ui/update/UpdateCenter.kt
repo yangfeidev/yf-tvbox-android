@@ -1,8 +1,11 @@
 package me.bsdnme.tvbox.ui.update
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.net.Uri
+import android.util.Log
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.Composable
@@ -53,6 +56,8 @@ sealed interface UpdateUiState {
  * 网络都在自建的 IO scope 里跑，状态写回是 Compose 快照写，线程安全。
  */
 object UpdateCenter {
+
+    private const val TAG = "UpdateCenter"
 
     var uiState by mutableStateOf<UpdateUiState>(UpdateUiState.Hidden)
         private set
@@ -237,12 +242,90 @@ object UpdateCenter {
     }
 
     /**
-     * 拉起系统安装器。
+     * 拉起安装。
+     *
+     * 不走 ACTION_VIEW + FileProvider：ColorOS / 电视定制 ROM 的安装器处理
+     * content URI 时解析不到传入包的真实版本——回显已安装应用的旧版本号
+     * 和旧图标，点安装后还是空跑一遍报「安装完成」，新包根本没进去
+     * （2026-11-06 一加 Android 16 真机复现实锤）。
+     * 改用系统 PackageInstaller 会话把 APK 流式写入，版本信息由会话内
+     * 的真实 APK 提供，不经过第三方安装器的解析链路。
      *
      * API 26+ 需要「允许安装未知应用」授权：没有授权时先跳系统设置页，
-     * 用户返回后继续安装已完成下载的 APK。
+     * 用户返回后继续安装已完成下载的 APK（onResume 接管）。
      */
     fun install(context: Context, file: File) {
+        if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+            val settingsIntent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}"),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            awaitingInstallPermission = true
+            runCatching { context.startActivity(settingsIntent) }
+                .onFailure { awaitingInstallPermission = false; installViaSession(context, file) }
+        } else {
+            installViaSession(context, file)
+        }
+    }
+
+    /** PackageInstaller 会话安装；异常时回退 ACTION_VIEW，保证不比旧行为差 */
+    private fun installViaSession(context: Context, file: File) {
+        try {
+            val installer = context.packageManager.packageInstaller
+            // 清理悬死会话：定制 ROM 上 commit 后确认页可能不弹（实测会卡死），
+            // 旧会话一直挂在「待确认」会让下次 CONFIRM_INSTALL 顶出坏会话报
+            // 「安装包已损坏」，所以每次安装前把自家遗留会话全部作废
+            if (Build.VERSION.SDK_INT >= 26) {
+                runCatching {
+                    installer.mySessions.forEach { info ->
+                        runCatching { installer.abandonSession(info.sessionId) }
+                    }
+                }
+            }
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            // 必须给精确大小：部分定制 ROM（ColorOS 等）在 size 未知时
+            // 校验阶段直接卡死，确认页永远不弹，会话悬在 committed 态
+            params.setSize(file.length())
+            val sessionId = installer.createSession(params)
+            val session = installer.openSession(sessionId)
+            Log.d(TAG, "install session=$sessionId created, size=${file.length()}")
+            try {
+                val out = session.openWrite("feige-update", 0, file.length())
+                try {
+                    file.inputStream().use { it.copyTo(out) }
+                    session.fsync(out)
+                } finally {
+                    out.close()
+                }
+                // 系统通过回调提供当前会话的确认 Intent 和最终安装结果。
+                val flags = if (Build.VERSION.SDK_INT >= 31)
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                else
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                val statusIntent = PendingIntent.getBroadcast(
+                    context,
+                    sessionId,
+                    Intent(context, InstallStatusReceiver::class.java),
+                    flags,
+                )
+                session.commit(statusIntent.intentSender)
+                Log.d(TAG, "install session=$sessionId committed")
+            } finally {
+                session.close()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "session install failed, fallback to view intent", e)
+            installViaViewIntent(context, file)
+        }
+    }
+
+    internal fun onInstallFailure(message: String) {
+        val downloaded = downloadedApk ?: return
+        uiState = UpdateUiState.Failed(message, downloaded.info, downloaded.mandatory)
+    }
+
+    /** 旧方式：ACTION_VIEW + FileProvider，仅作 PackageInstaller 失败时的兜底 */
+    private fun installViaViewIntent(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -252,17 +335,7 @@ object UpdateCenter {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
-            val settingsIntent = Intent(
-                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${context.packageName}"),
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            awaitingInstallPermission = true
-            runCatching { context.startActivity(settingsIntent) }
-                .onFailure { awaitingInstallPermission = false; context.startActivity(installIntent) }
-        } else {
-            context.startActivity(installIntent)
-        }
+        context.startActivity(installIntent)
     }
 
     fun onResume(context: Context) {

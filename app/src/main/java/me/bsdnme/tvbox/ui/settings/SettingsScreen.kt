@@ -493,7 +493,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                         .background(XColors.Divider),
                 )
                 Spacer(Modifier.height(12.dp))
-                // 操作行：两个等宽按钮并排，主操作实底、次操作弱底色
+                // 操作行：两个紧凑小按钮并排（自适应内容宽度），主操作实底、次操作弱底色
                 // 手动检查更新：发现新版本由全局弹窗接管，这里只展示文字结果
                 var checkingUpdate by remember { mutableStateOf(false) }
                 var updateMessage by remember { mutableStateOf<String?>(null) }
@@ -508,7 +508,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                                 checkingUpdate = false
                             }
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier,
                         shape = RoundedCornerShape(XRadii.md),
                         focusScale = 1.02f,
                         showBorder = false,
@@ -516,9 +516,9 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                     ) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(40.dp)
-                                .background(XColors.Accent, RoundedCornerShape(XRadii.md)),
+                                .height(32.dp)
+                                .background(XColors.Accent, RoundedCornerShape(XRadii.md))
+                                .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -532,7 +532,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                                 }
                                 Text(
                                     if (checkingUpdate) "检查中…" else "检查更新",
-                                    style = MaterialTheme.typography.labelLarge,
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = XColors.OnAccent,
                                 )
                             }
@@ -540,20 +540,20 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                     }
                     FocusableSurface(
                         onClick = { runCatching { uriHandler.openUri("https://bsdnme.me/") } },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier,
                         shape = RoundedCornerShape(XRadii.md),
                         focusScale = 1.02f,
                     ) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(40.dp)
-                                .background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.md)),
+                                .height(32.dp)
+                                .background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.md))
+                                .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 "个人网站 bsdnme.me",
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = XColors.TextPrimary,
                             )
                         }

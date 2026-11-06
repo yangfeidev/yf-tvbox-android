@@ -91,13 +91,7 @@ fun UpdateDialogHost() {
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = XColors.TextSecondary,
                             )
-                            Spacer(Modifier.height(8.dp))
                         }
-                        Text(
-                            "更新包约几 MB 到几十 MB，建议在 Wi-Fi 下下载",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = XColors.TextTertiary,
-                        )
                     }
                 },
                 confirmButton = {

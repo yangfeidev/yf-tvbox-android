@@ -49,6 +49,10 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".ui.update.InstallStatusReceiver"
+            android:exported="false" />
+
         <!-- 更新包安装：把应用私有目录里的 APK 以安全方式共享给系统安装器 -->
         <provider
             android:name="androidx.core.content.FileProvider"
