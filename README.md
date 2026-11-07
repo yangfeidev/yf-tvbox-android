@@ -1,4 +1,6 @@
-# 飞哥影视仓 · Android
+# yf-tvbox-android
+
+飞哥影视仓的 Android 项目。
 
 TVBox 类壳应用，通过自行提供的订阅地址加载点播与直播内容。**Android 手机 / 平板 / 电视共用一个 APK。**
 
