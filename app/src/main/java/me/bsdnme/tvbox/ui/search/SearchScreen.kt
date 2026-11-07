@@ -67,7 +67,7 @@ import me.bsdnme.tvbox.core.theme.XColors
 import me.bsdnme.tvbox.core.theme.XRadii
 import me.bsdnme.tvbox.data.model.MediaItem
 import me.bsdnme.tvbox.data.model.Site
-import me.bsdnme.tvbox.data.net.VodApi
+import me.bsdnme.tvbox.data.FamilyContent
 import me.bsdnme.tvbox.ui.component.EmptyState
 import me.bsdnme.tvbox.ui.component.FocusableSurface
 import me.bsdnme.tvbox.ui.component.GridSkeleton
@@ -89,6 +89,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun SearchScreen(
     state: AppUiState,
+    familyMode: Boolean,
     onOpenDetail: (Site, MediaItem) -> Unit,
     onBack: (() -> Unit)? = null,
     isActive: Boolean = true,
@@ -156,10 +157,12 @@ fun SearchScreen(
             searched = true
             error = null
             results = emptyList()
-            history = (listOf(query) + history.filter { it != query }).take(8)
-            store.saveSearchHistory(history)
+            if (!familyMode) {
+                history = (listOf(query) + history.filter { it != query }).take(8)
+                store.saveSearchHistory(history)
+            }
             try {
-                val found = withContext(Dispatchers.IO) { VodApi.search(current, query) }
+                val found = withContext(Dispatchers.IO) { FamilyContent.search(current, query, family = familyMode) }
                 results = found.items.distinctBy { it.id }
                 page = found.page.coerceAtLeast(1)
                 pageCount = found.pageCount
@@ -182,10 +185,10 @@ fun SearchScreen(
         moreError = null
         searchJob = scope.launch {
             try {
-                val found = withContext(Dispatchers.IO) { VodApi.search(current, lastQuery, next) }
+                val found = withContext(Dispatchers.IO) { FamilyContent.search(current, lastQuery, next, family = familyMode) }
                 if (generation == searchGeneration) {
                     results = (results + found.items).distinctBy { it.id }
-                    if (found.items.isEmpty() || found.page < next) pageCount = page else {
+                    if (found.page < next) pageCount = page else {
                         page = found.page
                         pageCount = found.pageCount
                     }
@@ -292,7 +295,7 @@ fun SearchScreen(
             }
         }
 
-        if (history.isNotEmpty() && !searched) {
+        if (!familyMode && history.isNotEmpty() && !searched) {
             Spacer(Modifier.height(16.dp))
             LazyRow(
                 contentPadding = PaddingValues(horizontal = padding),
@@ -326,6 +329,10 @@ fun SearchScreen(
                     description = error,
                     actionLabel = "重试",
                     onAction = { submit(lastQuery) },
+                )
+                results.isEmpty() && page < pageCount -> EmptyState(
+                    icon = Icons.Outlined.SearchOff, title = "本页没有可显示的内容",
+                    description = "可以继续查看下一页", actionLabel = "加载更多", onAction = { loadMore() },
                 )
                 results.isEmpty() -> EmptyState(
                     icon = Icons.Outlined.SearchOff,

@@ -13,6 +13,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,9 +57,13 @@ fun FeigeMediaApp(formFactor: FormFactor) {
     val vm: AppViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
+    val modePrefs = remember { context.getSharedPreferences("content_mode", android.content.Context.MODE_PRIVATE) }
+    var familyMode by remember { mutableStateOf(formFactor.isTv || modePrefs.getBoolean("family", false)) }
+    LaunchedEffect(formFactor) { if (formFactor.isTv) familyMode = true }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
-    val homeCache = remember { mutableMapOf<Site, HomeSnapshot>() }
-    val categoryCache = remember { CategoryCache() }
+    val homeCache = remember(familyMode) { mutableMapOf<Site, HomeSnapshot>() }
+    val categoryCache = remember(familyMode) { CategoryCache() }
     var focusHomeRequest by remember { mutableStateOf(0) }
     var detailTarget by remember { mutableStateOf<Pair<Site, MediaItem>?>(null) }
     var resumeFromHome by remember { mutableStateOf(false) }
@@ -105,6 +110,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                 when (current) {
                     Tab.Home -> HomeScreen(
                         state = state,
+                        familyMode = familyMode,
                         onOpenDetail = { site, item -> detailTarget = site to item },
                         onResume = { site, item -> resumeFromHome = true; detailTarget = site to item },
                         onOpenSearch = { searchVisible = true },
@@ -115,6 +121,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                     Tab.Category -> CategoryScreen(
                         state = state,
                         cache = categoryCache,
+                        familyMode = familyMode,
                         onOpenDetail = { site, item -> detailTarget = site to item },
                         onOpenSearch = { searchVisible = true },
                     )
@@ -130,10 +137,11 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                     Tab.Library -> LibraryScreen(
                         state = state,
                         vm = vm,
+                        familyMode = familyMode,
                         onOpenDetail = { site, item -> detailTarget = site to item },
                     )
 
-                    Tab.Settings -> SettingsScreen(state = state, vm = vm, onSiteChanged = {
+                    Tab.Settings -> SettingsScreen(state = state, vm = vm, familyMode = familyMode, onFamilyModeChange = { familyMode = it; modePrefs.edit().putBoolean("family", it).apply() }, onSiteChanged = {
                         tab = Tab.Home
                         focusHomeRequest++
                     })
@@ -153,6 +161,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
             ) {
                 SearchScreen(
                     state = state,
+                    familyMode = familyMode,
                     onOpenDetail = { site, item -> detailTarget = site to item },
                     onBack = { closeSearch() },
                     isActive = detailTarget == null && playback == null,
@@ -165,6 +174,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).tvFocusBoundary(active = playback == null)) {
                 DetailScreen(
                     vm = vm,
+                    familyMode = familyMode,
                     site = site,
                     item = item,
                     onBack = { closeDetail() },

@@ -149,6 +149,8 @@ data class LibraryEntry(
     val name: String,
     val poster: String = "",
     val remarks: String = "",
+    val typeId: String = "",
+    val categoryName: String = "",
     val episodeName: String = "",
     val sourceName: String = "",
     val progress: Float = 0f,
@@ -192,4 +194,6 @@ fun LibraryEntry.toMediaItem(): MediaItem = MediaItem(
     name = name,
     poster = poster,
     remarks = episodeName.ifBlank { remarks },
+    typeId = typeId,
+    categoryName = categoryName,
 )

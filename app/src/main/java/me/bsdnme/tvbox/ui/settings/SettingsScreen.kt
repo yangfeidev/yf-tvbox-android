@@ -91,10 +91,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Unit) {
+fun SettingsScreen(state: AppUiState, vm: AppViewModel, familyMode: Boolean, onFamilyModeChange: (Boolean) -> Unit, onSiteChanged: () -> Unit) {
     val padding = LocalFormFactor.current.horizontalPadding
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
+
+    var pinDialog by remember { mutableStateOf<String?>(null) }
+    pinDialog?.let { action ->
+        PinDialog(changePin = action == "change", onDismiss = { pinDialog = null }, onUnlocked = { pinDialog = null; onFamilyModeChange(false) })
+    }
 
     var url by remember { mutableStateOf(DefaultSources.BOX) }
     var name by remember { mutableStateOf("") }
@@ -468,6 +473,19 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
             SectionTitle(title = "偏好设置")
         }
 
+        item {
+            SwitchRow(
+                label = "家庭模式",
+                description = if (familyMode) "适合全家一起观看；切换个人模式需要 PIN" else "个人模式：显示全部内容；重新打开应用后电视恢复家庭模式",
+                checked = familyMode,
+                onCheckedChange = { if (it) onFamilyModeChange(true) else pinDialog = "unlock" },
+            )
+        }
+        item {
+            FocusableSurface(onClick = { pinDialog = "change" }, shape = RoundedCornerShape(XRadii.pill), focusScale = 1.04f) {
+                Text("设置或修改 PIN", modifier = Modifier.background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.pill)).padding(horizontal = 18.dp, vertical = 10.dp))
+            }
+        }
         item {
             SwitchRow(
                 label = "强制电视模式",

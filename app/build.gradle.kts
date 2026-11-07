@@ -17,8 +17,8 @@ android {
         minSdk = 24
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 18
-        versionName = "1.0.17"
+        versionCode = 19
+        versionName = "1.0.18"
         // 电视与手机同一个包，靠运行时分流布局
         resourceConfigurations += listOf("zh", "en")
     }

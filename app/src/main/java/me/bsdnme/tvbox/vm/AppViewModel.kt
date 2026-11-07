@@ -370,6 +370,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         name = item.name,
                         poster = item.poster,
                         remarks = item.remarks,
+                        typeId = item.typeId,
+                        categoryName = item.categoryName,
                         updatedAt = System.currentTimeMillis(),
                     ),
                 ) + current
@@ -387,6 +389,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     name = item.name,
                     poster = item.poster,
                     remarks = item.remarks,
+                    typeId = item.typeId,
+                    categoryName = item.categoryName,
                     episodeName = episodeName,
                     sourceName = sourceName,
                     progress = progress.coerceIn(0f, 1f),

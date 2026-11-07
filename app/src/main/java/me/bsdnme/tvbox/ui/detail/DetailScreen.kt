@@ -57,7 +57,7 @@ import me.bsdnme.tvbox.data.model.MediaItem
 import me.bsdnme.tvbox.data.model.PlaySource
 import me.bsdnme.tvbox.data.model.Site
 import me.bsdnme.tvbox.data.model.findResumeTarget
-import me.bsdnme.tvbox.data.net.VodApi
+import me.bsdnme.tvbox.data.FamilyContent
 import me.bsdnme.tvbox.ui.component.EmptyState
 import me.bsdnme.tvbox.ui.component.FocusableSurface
 import me.bsdnme.tvbox.ui.component.LoadingBox
@@ -84,6 +84,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun DetailScreen(
     vm: AppViewModel,
+    familyMode: Boolean,
     site: Site,
     item: MediaItem,
     onBack: () -> Unit,
@@ -123,7 +124,7 @@ fun DetailScreen(
         loading = true
         error = null
         try {
-            val loaded = withContext(Dispatchers.IO) { VodApi.detail(site, item.id) }
+            val loaded = withContext(Dispatchers.IO) { FamilyContent.detail(site, item.id, familyMode) }
             sourceIndex = loaded.usableSources.indexOfFirst { source -> source.episodes.any { it.isPlayable } }.coerceAtLeast(0)
             detail = loaded
         } catch (e: kotlinx.coroutines.CancellationException) {

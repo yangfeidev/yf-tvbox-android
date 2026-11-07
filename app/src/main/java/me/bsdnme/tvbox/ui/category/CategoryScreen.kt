@@ -27,7 +27,7 @@ import me.bsdnme.tvbox.core.theme.XColors
 import me.bsdnme.tvbox.data.model.Category
 import me.bsdnme.tvbox.data.model.MediaItem
 import me.bsdnme.tvbox.data.model.Site
-import me.bsdnme.tvbox.data.net.VodApi
+import me.bsdnme.tvbox.data.FamilyContent
 import me.bsdnme.tvbox.ui.component.EmptyState
 import me.bsdnme.tvbox.ui.component.PillChip
 import me.bsdnme.tvbox.ui.component.PosterCard
@@ -81,7 +81,7 @@ class CategoryPageState {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, onOpenSearch: () -> Unit, cache: CategoryCache) {
+fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, MediaItem) -> Unit, onOpenSearch: () -> Unit, cache: CategoryCache) {
     val form = LocalFormFactor.current
     val site = state.currentSite
     if (site == null) {
@@ -94,7 +94,7 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, o
         if (!siteState.categoriesLoaded || categoriesRetry > 0) {
             siteState.categoriesError = null
             try {
-                siteState.categories = withContext(Dispatchers.IO) { VodApi.categories(site) }.distinctBy { it.typeId }
+                siteState.categories = withContext(Dispatchers.IO) { FamilyContent.categories(site, familyMode) }.distinctBy { it.typeId }
                 siteState.categoriesLoaded = true
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { siteState.categoriesError = e.message ?: "分类加载失败" }
@@ -147,13 +147,13 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, o
             val id = siteState.selected
             val pageState = remember(siteState, id) { siteState.page(id) }
             Box(Modifier.weight(1f)) {
-                CategoryPage(site, id, siteState.categories, pageState, active = true, onOpenDetail = onOpenDetail,
+                CategoryPage(site, id, siteState.categories, pageState, familyMode, active = true, onOpenDetail = onOpenDetail,
                     onRetryCategories = { if (!siteState.categoriesLoaded) categoriesRetry++ })
             }
         } else HorizontalPager(state = pager, modifier = Modifier.weight(1f), key = { ids[it] }) { index ->
             val id = ids[index]
             val pageState = remember(siteState, id) { siteState.page(id) }
-            CategoryPage(site, id, siteState.categories, pageState, active = pager.settledPage == index, onOpenDetail = onOpenDetail,
+            CategoryPage(site, id, siteState.categories, pageState, familyMode, active = pager.settledPage == index, onOpenDetail = onOpenDetail,
                 onRetryCategories = { if (!siteState.categoriesLoaded) categoriesRetry++ })
         }
     }
@@ -161,7 +161,7 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, o
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryPage(site: Site, id: String, categories: List<Category>, data: CategoryPageState, active: Boolean, onOpenDetail: (Site, MediaItem) -> Unit, onRetryCategories: () -> Unit) {
+private fun CategoryPage(site: Site, id: String, categories: List<Category>, data: CategoryPageState, familyMode: Boolean, active: Boolean, onOpenDetail: (Site, MediaItem) -> Unit, onRetryCategories: () -> Unit) {
     val form = LocalFormFactor.current
     LaunchedEffect(site, id, data.reload, active, categories) {
         if (!active || (data.loaded && data.reload == data.handledReload)) return@LaunchedEffect
@@ -174,9 +174,9 @@ private fun CategoryPage(site: Site, id: String, categories: List<Category>, dat
         try {
             if (form == FormFactor.Television && id.isNotBlank() && !data.loaded) delay(250)
             val (result, fallback) = withContext(Dispatchers.IO) {
-                val direct = VodApi.list(site, id, 1)
+                val direct = FamilyContent.list(site, id, 1, familyMode)
                 if (id.isNotBlank() && categories.any { it.parentId == id }) {
-                    val children = VodApi.listChildren(site, id, categories, 1)
+                    val children = FamilyContent.listChildren(site, id, categories, 1, familyMode)
                     direct.copy(items = (direct.items + children.items).distinctBy { it.id }, pageCount = maxOf(direct.pageCount, children.pageCount)) to true
                 } else direct to false
             }
@@ -198,20 +198,20 @@ private fun CategoryPage(site: Site, id: String, categories: List<Category>, dat
         if (!active) return@LaunchedEffect
         snapshotFlow {
             val last = data.grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            data.loaded && !data.loading && !data.loadingMore && data.moreError == null && data.items.isNotEmpty() && data.page < data.pageCount && last >= data.items.size - 3
+            data.loaded && !data.loading && !data.loadingMore && data.moreError == null && data.page < data.pageCount && (data.items.isEmpty() || last >= data.items.size - 3)
         }.distinctUntilChanged().collect { shouldLoad ->
             if (!shouldLoad) return@collect
             data.loadingMore = true
             try {
                 val next = data.page + 1
                 val result = withContext(Dispatchers.IO) {
-                    val direct = VodApi.list(site, id, next)
+                    val direct = FamilyContent.list(site, id, next, familyMode)
                     if (data.useChildren) {
-                        val children = VodApi.listChildren(site, id, categories, next)
+                        val children = FamilyContent.listChildren(site, id, categories, next, familyMode)
                         direct.copy(items = (direct.items + children.items).distinctBy { it.id }, page = next, pageCount = maxOf(direct.pageCount, children.pageCount))
                     } else direct
                 }
-                if (result.items.isEmpty() || result.page < next) data.pageCount = data.page
+                if (result.page < next) data.pageCount = data.page
                 else {
                     data.items = (data.items + result.items).distinctBy { it.id }
                     data.page = result.page

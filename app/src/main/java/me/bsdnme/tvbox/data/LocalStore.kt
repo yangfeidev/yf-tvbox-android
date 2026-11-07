@@ -164,6 +164,8 @@ class LocalStore(context: Context) {
         name = node.optString("name"),
         poster = node.optString("poster"),
         remarks = node.optString("remarks"),
+        typeId = node.optString("typeId"),
+        categoryName = node.optString("categoryName"),
         episodeName = node.optString("episodeName"),
         sourceName = node.optString("sourceName"),
         progress = node.optDouble("progress", 0.0).toFloat(),
@@ -176,6 +178,8 @@ class LocalStore(context: Context) {
         put("name", entry.name)
         put("poster", entry.poster)
         put("remarks", entry.remarks)
+        put("typeId", entry.typeId)
+        put("categoryName", entry.categoryName)
         put("episodeName", entry.episodeName)
         put("sourceName", entry.sourceName)
         put("progress", entry.progress.toDouble())

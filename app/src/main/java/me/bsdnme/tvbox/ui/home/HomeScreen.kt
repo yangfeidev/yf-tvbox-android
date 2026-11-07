@@ -44,7 +44,7 @@ import me.bsdnme.tvbox.data.model.LibraryEntry
 import me.bsdnme.tvbox.data.model.MediaItem
 import me.bsdnme.tvbox.data.model.Site
 import me.bsdnme.tvbox.data.model.toMediaItem
-import me.bsdnme.tvbox.data.net.VodApi
+import me.bsdnme.tvbox.data.FamilyContent
 import me.bsdnme.tvbox.ui.component.BrandMark
 import me.bsdnme.tvbox.ui.component.EmptyState
 import me.bsdnme.tvbox.ui.component.FocusableSurface
@@ -79,6 +79,7 @@ data class HomeSnapshot(val latest: List<MediaItem>, val rails: List<Pair<Catego
 @Composable
 fun HomeScreen(
     state: AppUiState,
+    familyMode: Boolean,
     onOpenDetail: (Site, MediaItem) -> Unit,
     onResume: (Site, MediaItem) -> Unit,
     onOpenSearch: () -> Unit,
@@ -96,7 +97,7 @@ fun HomeScreen(
     var loadGeneration by remember { mutableIntStateOf(0) }
 
     var reloadKey by remember { mutableIntStateOf(0) }
-    LaunchedEffect(site, reloadKey) {
+    LaunchedEffect(site, reloadKey, familyMode) {
         val current = site ?: return@LaunchedEffect
         val previous = cache[current]?.takeIf { System.currentTimeMillis() - it.savedAt < 5 * 60_000 }
         if (reloadKey == 0 && previous != null) {
@@ -112,16 +113,16 @@ fun HomeScreen(
         latest = emptyList()
         rails = emptyList()
         try {
-            val page = withContext(Dispatchers.IO) { VodApi.list(current) }
+            val page = withContext(Dispatchers.IO) { FamilyContent.list(current, family = familyMode) }
             latest = page.items
             val categories = withContext(Dispatchers.IO) {
-                runCatching { VodApi.categories(current) }.getOrDefault(emptyList())
+                runCatching { FamilyContent.categories(current, familyMode) }.getOrDefault(emptyList())
             }.ifEmpty { page.categories }
             rails = coroutineScope {
                 categories.take(4).map { category ->
                     async(Dispatchers.IO) {
                         category to runCatching {
-                            VodApi.list(current, typeId = category.typeId).items
+                            FamilyContent.list(current, typeId = category.typeId, family = familyMode).items
                         }.getOrDefault(emptyList())
                     }
                 }.awaitAll().filter { it.second.isNotEmpty() }
@@ -207,7 +208,7 @@ fun HomeScreen(
                 )
             }
         }
-        val history = state.history.filter { entry -> state.usableSites.any { it.key == entry.siteKey } }.take(10)
+        val history = state.history.filter { entry -> state.usableSites.any { it.key == entry.siteKey } && (!familyMode || FamilyContent.libraryVisible(entry.toMediaItem(), state.usableSites.firstOrNull { it.key == entry.siteKey })) }.take(10)
         if (history.isNotEmpty()) {
             item {
                 val cardWidth = railCardWidth(formFactor)

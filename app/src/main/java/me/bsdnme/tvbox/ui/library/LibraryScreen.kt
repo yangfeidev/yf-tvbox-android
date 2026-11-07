@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import me.bsdnme.tvbox.core.theme.LocalFormFactor
 import me.bsdnme.tvbox.core.theme.XColors
+import me.bsdnme.tvbox.data.FamilyContent
 import me.bsdnme.tvbox.data.model.MediaItem
 import me.bsdnme.tvbox.data.model.Site
 import me.bsdnme.tvbox.data.model.toMediaItem
@@ -54,6 +55,7 @@ import me.bsdnme.tvbox.vm.AppViewModel
 fun LibraryScreen(
     state: AppUiState,
     vm: AppViewModel,
+    familyMode: Boolean,
     onOpenDetail: (Site, MediaItem) -> Unit,
 ) {
     val formFactor = LocalFormFactor.current
@@ -69,7 +71,12 @@ fun LibraryScreen(
         confirmButton = { TextButton(onClick = { unavailable = false }) { Text("知道了") } },
     )
 
-    val entries = if (showHistory) state.history else state.favorites
+    fun visible(entries: List<me.bsdnme.tvbox.data.model.LibraryEntry>) = if (!familyMode) entries else entries.filter { entry ->
+        FamilyContent.libraryVisible(entry.toMediaItem(), state.usableSites.firstOrNull { it.key == entry.siteKey })
+    }
+    val favorites = visible(state.favorites)
+    val history = visible(state.history)
+    val entries = if (showHistory) history else favorites
     val site = state.currentSite
 
     Column(Modifier.fillMaxSize()) {
@@ -81,7 +88,7 @@ fun LibraryScreen(
         ) {
             Text("我的", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.weight(1f))
-            if (showHistory && entries.isNotEmpty()) {
+            if (showHistory && entries.isNotEmpty() && !familyMode) {
                 FocusableSurface(
                     onClick = { vm.clearHistory() },
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
@@ -102,12 +109,12 @@ fun LibraryScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             PillChip(
-                label = "收藏 ${state.favorites.size}",
+                label = "收藏 ${favorites.size}",
                 selected = !showHistory,
                 onClick = { showHistory = false },
             )
             PillChip(
-                label = "历史 ${state.history.size}",
+                label = "历史 ${history.size}",
                 selected = showHistory,
                 onClick = { showHistory = true },
             )
