@@ -22,7 +22,7 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import me.bsdnme.tvbox.ui.component.AdaptiveRefreshBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -159,7 +159,7 @@ fun HomeScreen(
         return
     }
 
-    PullToRefreshBox(isRefreshing = loading, onRefresh = { reloadKey++ }, modifier = Modifier.fillMaxSize()) {
+    AdaptiveRefreshBox(isRefreshing = loading, onRefresh = { reloadKey++ }, modifier = Modifier.fillMaxSize()) {
     if (loading && latest.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
             HomeHeader(site, onOpenSearch, onOpenSettings) { reloadKey++ }
@@ -177,7 +177,7 @@ fun HomeScreen(
                 ),
             )
         }
-        return@PullToRefreshBox
+        return@AdaptiveRefreshBox
     }
 
     if (error != null && latest.isEmpty()) {
@@ -192,7 +192,7 @@ fun HomeScreen(
                 modifier = Modifier.weight(1f),
             )
         }
-        return@PullToRefreshBox
+        return@AdaptiveRefreshBox
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize()) {

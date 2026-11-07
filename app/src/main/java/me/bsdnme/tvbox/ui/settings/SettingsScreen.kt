@@ -1,6 +1,18 @@
 package me.bsdnme.tvbox.ui.settings
 
+import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import me.bsdnme.tvbox.core.theme.FormFactor
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +39,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,6 +114,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                 is AddResult.Success -> {
                     message = "订阅已添加"
                     name = ""
+                    siteQuery = ""
                 }
                 is AddResult.NeedWarehouse -> warehouse = result.entries
                 is AddResult.Failure -> message = result.message
@@ -107,6 +125,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
 
     warehouse?.let { entries ->
         AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
             onDismissRequest = { warehouse = null },
             title = { Text("这是多仓订阅") },
             text = {
@@ -175,7 +194,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
             ) {
                 Text("添加订阅", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(12.dp))
-                TextField(
+                SettingsTextField(
                     value = url,
                     onValueChange = { url = it },
                     modifier = Modifier.fillMaxWidth(),
@@ -191,7 +210,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                     maxLines = 2,
                 )
                 Spacer(Modifier.height(10.dp))
-                TextField(
+                SettingsTextField(
                     value = name,
                     onValueChange = { name = it },
                     modifier = Modifier.fillMaxWidth(),
@@ -349,7 +368,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
         }
 
         item {
-            TextField(
+            SettingsTextField(
                 value = siteQuery,
                 onValueChange = { siteQuery = it },
                 modifier = Modifier.fillMaxWidth(),
@@ -360,15 +379,17 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
             )
         }
 
-        item {
+        val prefix = "${state.settings.activeSubscriptionId}::"
+        val visibleSites = state.usableSites.filter { it.name.contains(siteQuery.trim(), ignoreCase = true) }
+            .sortedBy { if (prefix + it.key in state.pinnedSites) 0 else 1 }
+        // 拆成多个懒加载项，订阅变化时更新列表，也避免大量源站一次性测量。
+        val siteGroups = visibleSites.chunked(12)
+        items(siteGroups.size) { index ->
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val prefix = "${state.settings.activeSubscriptionId}::"
-                val visibleSites = state.usableSites.filter { it.name.contains(siteQuery.trim(), ignoreCase = true) }
-                    .sortedBy { if (prefix + it.key in state.pinnedSites) 0 else 1 }
-                visibleSites.forEach { site ->
+                siteGroups[index].forEach { site ->
                     val pinned = prefix + site.key in state.pinnedSites
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
                         PillChip(
@@ -386,8 +407,10 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                             onClick = { vm.togglePinnedSite(site) })
                     }
                 }
-                if (visibleSites.isEmpty() && siteQuery.isNotBlank()) Text("没有找到匹配的源站", style = MaterialTheme.typography.bodySmall)
             }
+        }
+        if (visibleSites.isEmpty() && siteQuery.isNotBlank()) {
+            item { Text("没有找到匹配的源站", style = MaterialTheme.typography.bodySmall) }
         }
 
         if (state.usableSites.isEmpty()) {
@@ -406,7 +429,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
 
         item {
             Column {
-                TextField(
+                SettingsTextField(
                     value = liveUrl,
                     onValueChange = { liveUrl = it },
                     modifier = Modifier.fillMaxWidth(),
@@ -493,25 +516,17 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                 )
                 Spacer(Modifier.height(12.dp))
                 // 操作行：两个紧凑小按钮并排（自适应内容宽度），主操作实底、次操作弱底色
-                // 手动检查更新：发现新版本由全局弹窗接管，这里只展示文字结果
-                var checkingUpdate by remember { mutableStateOf(false) }
-                var updateMessage by remember { mutableStateOf<String?>(null) }
+                // 检查任务和弹窗独立于设置页，按钮保持焦点直到弹窗接管。
+                val checkingUpdate = UpdateCenter.uiState == me.bsdnme.tvbox.ui.update.UpdateUiState.Checking
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FocusableSurface(
                         onClick = {
-                            if (checkingUpdate) return@FocusableSurface
-                            scope.launch {
-                                checkingUpdate = true
-                                updateMessage = null
-                                updateMessage = UpdateCenter.manualCheck(context)
-                                checkingUpdate = false
-                            }
+                            if (!checkingUpdate) UpdateCenter.manualCheck(context)
                         },
                         modifier = Modifier,
                         shape = RoundedCornerShape(XRadii.md),
                         focusScale = 1.02f,
                         showBorder = false,
-                        enabled = !checkingUpdate,
                     ) {
                         Box(
                             modifier = Modifier
@@ -557,10 +572,6 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, onSiteChanged: () -> Uni
                             )
                         }
                     }
-                }
-                if (updateMessage != null) {
-                    Spacer(Modifier.height(10.dp))
-                    InlineNotice(updateMessage!!)
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
@@ -666,4 +677,53 @@ private fun relativeTime(time: Long?): String {
         minutes < 1440 -> "${minutes / 60} 小时前更新"
         else -> "${minutes / 1440} 天前更新"
     }
+}
+
+@Composable
+private fun SettingsTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = false,
+    placeholder: @Composable (() -> Unit)? = null,
+    shape: androidx.compose.ui.graphics.Shape,
+    colors: androidx.compose.material3.TextFieldColors,
+) {
+    val television = LocalFormFactor.current == FormFactor.Television
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    var editing by remember { mutableStateOf(false) }
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(editing) {
+        if (editing) {
+            withFrameNanos { }
+            keyboard?.show()
+        }
+    }
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier.onFocusChanged { if (!it.isFocused) editing = false }
+            .onPreviewKeyEvent { event ->
+                if (!television || (editing && imeVisible) || event.type != KeyEventType.KeyDown) false
+                else when (event.key) {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                        editing = true
+                        if (editing) keyboard?.show()
+                        true
+                    }
+                    Key.DirectionUp -> { editing = false; focusManager.moveFocus(FocusDirection.Up); true }
+                    Key.DirectionDown -> { editing = false; focusManager.moveFocus(FocusDirection.Down); true }
+                    Key.DirectionLeft -> { editing = false; focusManager.moveFocus(FocusDirection.Left); true }
+                    Key.DirectionRight -> { editing = false; focusManager.moveFocus(FocusDirection.Right); true }
+                    else -> false
+                }
+            },
+        readOnly = television && !editing,
+        keyboardOptions = KeyboardOptions(showKeyboardOnFocus = !television),
+        singleLine = singleLine,
+        placeholder = placeholder,
+        shape = shape,
+        colors = colors,
+    )
 }

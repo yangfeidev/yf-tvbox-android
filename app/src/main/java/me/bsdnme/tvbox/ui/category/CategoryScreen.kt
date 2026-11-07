@@ -15,7 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import me.bsdnme.tvbox.ui.component.AdaptiveRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,10 +107,11 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, o
     val tabs = rememberLazyListState()
     LaunchedEffect(siteState.selected, ids) {
         val index = ids.indexOf(siteState.selected)
-        if (index >= 0) tabs.animateScrollToItem(index)
+        if (form != FormFactor.Television && index >= 0) tabs.animateScrollToItem(index)
     }
     // Follow swipes after they settle; clicks and TV focus request a page directly.
-    LaunchedEffect(pager, ids) {
+    LaunchedEffect(pager, ids, form) {
+        if (form == FormFactor.Television) return@LaunchedEffect
         snapshotFlow { pager.settledPage }.distinctUntilChanged().collect { index ->
             siteState.selected = ids.getOrElse(index) { "" }
         }
@@ -118,7 +119,7 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, o
     fun select(index: Int) {
         if (index in ids.indices) {
             siteState.selected = ids[index]
-            scope.launch { pager.scrollToPage(index) }
+            if (form != FormFactor.Television) scope.launch { pager.scrollToPage(index) }
         }
     }
     Column(Modifier.fillMaxSize()) {
@@ -142,7 +143,14 @@ fun CategoryScreen(state: AppUiState, onOpenDetail: (Site, MediaItem) -> Unit, o
             }
             if (siteState.categoriesError != null) Text("分类加载失败，刷新重试", style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary)
         }
-        HorizontalPager(state = pager, modifier = Modifier.weight(1f), userScrollEnabled = form != FormFactor.Television, key = { ids[it] }) { index ->
+        if (form == FormFactor.Television) {
+            val id = siteState.selected
+            val pageState = remember(siteState, id) { siteState.page(id) }
+            Box(Modifier.weight(1f)) {
+                CategoryPage(site, id, siteState.categories, pageState, active = true, onOpenDetail = onOpenDetail,
+                    onRetryCategories = { if (!siteState.categoriesLoaded) categoriesRetry++ })
+            }
+        } else HorizontalPager(state = pager, modifier = Modifier.weight(1f), key = { ids[it] }) { index ->
             val id = ids[index]
             val pageState = remember(siteState, id) { siteState.page(id) }
             CategoryPage(site, id, siteState.categories, pageState, active = pager.settledPage == index, onOpenDetail = onOpenDetail,
@@ -173,7 +181,7 @@ private fun CategoryPage(site: Site, id: String, categories: List<Category>, dat
                 } else direct to false
             }
             data.useChildren = fallback
-            data.items = result.items
+            data.items = result.items.distinctBy { it.id }
             data.page = result.page.coerceAtLeast(1)
             data.pageCount = result.pageCount
             data.loaded = true
@@ -214,7 +222,7 @@ private fun CategoryPage(site: Site, id: String, categories: List<Category>, dat
             finally { data.loadingMore = false }
         }
     }
-    PullToRefreshBox(isRefreshing = data.loading, onRefresh = { data.reload++; onRetryCategories() }, modifier = Modifier.fillMaxSize()) {
+    AdaptiveRefreshBox(isRefreshing = data.loading, onRefresh = { data.reload++; onRetryCategories() }, modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(columns = GridCells.Fixed(form.gridColumns), state = data.grid, modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = form.horizontalPadding, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {

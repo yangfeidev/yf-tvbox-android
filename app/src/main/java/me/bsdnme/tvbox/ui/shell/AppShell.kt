@@ -72,12 +72,14 @@ fun AppShell(
     selected: Tab,
     onSelect: (Tab) -> Unit,
     focusHomeRequest: Int = 0,
+    navigationActive: Boolean = true,
+    restoreNavigationFocus: Int = 0,
     content: @Composable (Tab) -> Unit,
 ) {
     when (formFactor) {
         FormFactor.Phone -> PhoneShell(selected, onSelect, content)
-        FormFactor.Tablet -> SidebarShell(selected, onSelect, content, wide = true, focusHomeRequest = focusHomeRequest)
-        FormFactor.Television -> SidebarShell(selected, onSelect, content, wide = false, focusHomeRequest = focusHomeRequest)
+        FormFactor.Tablet -> SidebarShell(selected, onSelect, content, wide = true, focusHomeRequest = focusHomeRequest, navigationActive = navigationActive, restoreNavigationFocus = restoreNavigationFocus)
+        FormFactor.Television -> SidebarShell(selected, onSelect, content, wide = false, focusHomeRequest = focusHomeRequest, navigationActive = navigationActive, restoreNavigationFocus = restoreNavigationFocus)
     }
 }
 
@@ -154,8 +156,17 @@ private fun SidebarShell(
     content: @Composable (Tab) -> Unit,
     wide: Boolean,
     focusHomeRequest: Int,
+    navigationActive: Boolean,
+    restoreNavigationFocus: Int,
 ) {
     val homeFocus = remember { FocusRequester() }
+    val selectedFocus = remember { FocusRequester() }
+    LaunchedEffect(restoreNavigationFocus) {
+        if (!wide && restoreNavigationFocus > 0) {
+            androidx.compose.runtime.withFrameNanos { }
+            runCatching { selectedFocus.requestFocus() }
+        }
+    }
     LaunchedEffect(focusHomeRequest, wide) {
         if (!wide && focusHomeRequest > 0) runCatching { homeFocus.requestFocus() }
     }
@@ -183,9 +194,10 @@ private fun SidebarShell(
                     selected = tab == selected,
                     wide = wide,
                     onClick = { onSelect(tab) },
-                    onFocus = { if (!wide && tab != selected) onSelect(tab) },
+                    onFocus = { if (!wide && navigationActive && tab != selected) onSelect(tab) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp)
-                        .then(if (tab == Tab.Home) Modifier.focusRequester(homeFocus) else Modifier),
+                        .then(if (tab == Tab.Home) Modifier.focusRequester(homeFocus) else Modifier)
+                        .then(if (tab == selected) Modifier.focusRequester(selectedFocus) else Modifier),
                 )
             }
         }
@@ -208,6 +220,7 @@ private fun RailItem(
         modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocus() },
         shape = RoundedCornerShape(XRadii.md),
         focusScale = 1.04f,
+        borderWidth = if (wide) 2.dp else 0.dp,
     ) {
         Row(
             modifier = Modifier

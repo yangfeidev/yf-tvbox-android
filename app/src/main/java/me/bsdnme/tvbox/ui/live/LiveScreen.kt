@@ -26,13 +26,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import me.bsdnme.tvbox.ui.component.AdaptiveRefreshBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -215,7 +216,7 @@ private fun PhoneLayout(
                 )
             }
         }
-        PullToRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
+        AdaptiveRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
             when {
                 loading && groups.isEmpty() -> LiveLoading()
                 error != null -> EmptyState(
@@ -232,11 +233,13 @@ private fun PhoneLayout(
                     actionLabel = "重试",
                     onAction = onRetry,
                 )
-                else -> ChannelGrid(
-                    channels = groups[groupIndex.coerceIn(0, groups.size - 1)].channels,
-                    contentPadding = PaddingValues(horizontal = padding, vertical = 8.dp),
-                    onPlayChannel = onPlayChannel,
-                )
+                else -> key(sourceIndex, groupIndex) {
+                    ChannelGrid(
+                        channels = groups[groupIndex.coerceIn(0, groups.size - 1)].channels,
+                        contentPadding = PaddingValues(horizontal = padding, vertical = 8.dp),
+                        onPlayChannel = onPlayChannel,
+                    )
+                }
             }
         }
     }
@@ -265,7 +268,10 @@ private fun WideLayout(
                 .fillMaxHeight()
                 .padding(start = padding, end = 12.dp, top = 12.dp, bottom = 12.dp),
         ) {
-            Text("直播", style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("直播", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                PillChip(label = "刷新", selected = false, onClick = onRetry)
+            }
             Spacer(Modifier.height(12.dp))
             if (sources.size > 1) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -290,11 +296,12 @@ private fun WideLayout(
                         selected = index == groupIndex,
                         onClick = { onSelectGroup(index) },
                         modifier = Modifier.fillMaxWidth(),
+                        selectOnFocus = formFactor.isTv,
                     )
                 }
             }
         }
-        PullToRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
+        AdaptiveRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
             when {
                 loading && groups.isEmpty() -> LiveLoading()
                 error != null -> EmptyState(
@@ -311,11 +318,13 @@ private fun WideLayout(
                     actionLabel = "重试",
                     onAction = onRetry,
                 )
-                else -> ChannelGrid(
-                    channels = groups[groupIndex.coerceIn(0, groups.size - 1)].channels,
-                    contentPadding = PaddingValues(end = padding, top = 12.dp, bottom = 12.dp),
-                    onPlayChannel = onPlayChannel,
-                )
+                else -> key(sourceIndex, groupIndex) {
+                    ChannelGrid(
+                        channels = groups[groupIndex.coerceIn(0, groups.size - 1)].channels,
+                        contentPadding = PaddingValues(end = padding, top = 12.dp, bottom = 12.dp),
+                        onPlayChannel = onPlayChannel,
+                    )
+                }
             }
         }
     }

@@ -42,6 +42,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -91,14 +100,25 @@ fun SearchScreen(
     val context = LocalContext.current
     val store = remember(context) { LocalStore(context) }
     val inputFocus = remember { FocusRequester() }
+    val searchFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     var hasAutoFocused by remember { mutableStateOf(false) }
     var inputFocused by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(editing) {
+        if (editing && formFactor.isTv) {
+            androidx.compose.runtime.withFrameNanos { }
+            keyboard?.show()
+        }
+    }
     LaunchedEffect(formFactor, isActive) {
         if (isActive && (!hasAutoFocused || formFactor == FormFactor.Television)) {
             androidx.compose.runtime.withFrameNanos { }
+            val firstOpen = !hasAutoFocused
             runCatching { inputFocus.requestFocus() }
+            if (firstOpen && formFactor.isTv) editing = true
             if (formFactor != FormFactor.Television) keyboard?.show()
             hasAutoFocused = true
         }
@@ -218,7 +238,18 @@ fun SearchScreen(
                 onValueChange = { keyword = it; if (it.isBlank()) searched = false },
                 modifier = Modifier.weight(1f)
                     .focusRequester(inputFocus)
-                    .onFocusChanged { inputFocused = it.isFocused }
+                    .onFocusChanged { inputFocused = it.isFocused; if (!it.isFocused) editing = false }
+                    .onPreviewKeyEvent { event ->
+                        if (!formFactor.isTv || (editing && imeVisible) || event.type != KeyEventType.KeyDown) false
+                        else when (event.key) {
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { if (editing) keyboard?.show() else editing = true; true }
+                            Key.DirectionUp -> { editing = false; focusManager.moveFocus(FocusDirection.Up); true }
+                            Key.DirectionDown -> { editing = false; focusManager.moveFocus(FocusDirection.Down); true }
+                            Key.DirectionLeft -> { editing = false; focusManager.moveFocus(FocusDirection.Left); true }
+                            Key.DirectionRight -> { editing = false; keyboard?.hide(); searchFocus.requestFocus(); true }
+                            else -> false
+                        }
+                    }
                     .border(if (inputFocused) 3.dp else 1.dp, if (inputFocused) Color.White else XColors.Divider, RoundedCornerShape(XRadii.pill)),
                 singleLine = true,
                 placeholder = {
@@ -227,7 +258,8 @@ fun SearchScreen(
                 leadingIcon = {
                     Icon(Icons.Outlined.Search, contentDescription = null, tint = XColors.TextSecondary)
                 },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                readOnly = formFactor.isTv && !editing,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, showKeyboardOnFocus = !formFactor.isTv),
                 keyboardActions = KeyboardActions(onSearch = { submit(keyword) }),
                 shape = RoundedCornerShape(XRadii.pill),
                 colors = TextFieldDefaults.colors(
@@ -243,6 +275,7 @@ fun SearchScreen(
             Spacer(Modifier.width(10.dp))
             FocusableSurface(
                 onClick = { submit(keyword) },
+                modifier = Modifier.focusRequester(searchFocus),
                 shape = RoundedCornerShape(XRadii.pill),
                 focusScale = 1.05f,
                 showBorder = false,

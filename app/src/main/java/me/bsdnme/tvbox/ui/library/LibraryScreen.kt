@@ -1,5 +1,6 @@
 package me.bsdnme.tvbox.ui.library
 
+import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,7 @@ fun LibraryScreen(
     var unavailable by remember { mutableStateOf(false) }
 
     if (unavailable) AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
         onDismissRequest = { unavailable = false },
         title = { Text("原片源不可用") },
         text = { Text("请切换回原来的订阅，或重新添加该片源后再打开。") },

@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -120,6 +121,7 @@ fun PillChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    selectOnFocus: Boolean = false,
 ) {
     val background by animateColorAsState(
         targetValue = if (selected) XColors.Accent else XColors.Surface,
@@ -132,9 +134,10 @@ fun PillChip(
     val shape = RoundedCornerShape(XRadii.pill)
     FocusableSurface(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { if (selectOnFocus && it.isFocused && !selected) onClick() },
         shape = shape,
         focusScale = 1.04f,
+        borderWidth = if (selectOnFocus) 0.dp else 2.dp,
         showBorder = true,
     ) {
         Row(

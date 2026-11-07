@@ -33,6 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import me.bsdnme.tvbox.core.theme.LocalFormFactor
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import me.bsdnme.tvbox.core.theme.XColors
@@ -62,12 +64,15 @@ fun PosterCard(
     showMeta: Boolean = true,
     subtitle: String? = null,
 ) {
+    val isTv = LocalFormFactor.current.isTv
     val cardModifier = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
     FocusableSurface(
         onClick = onClick,
         modifier = cardModifier,
         shape = RoundedCornerShape(XRadii.md),
-        focusScale = 1.08f,
+        focusScale = if (isTv) 1.04f else 1.08f,
+        borderWidth = if (isTv) 1.5.dp else 2.dp,
+        showBorder = !isTv,
     ) {
         Column(Modifier.padding(1.dp)) {
             Box(
@@ -115,8 +120,8 @@ fun PosterCard(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     item.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
+                    style = if (isTv) MaterialTheme.typography.titleSmall.copy(fontSize = 13.sp) else MaterialTheme.typography.titleSmall,
+                    maxLines = if (isTv) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val meta = subtitle ?: listOfNotNull(

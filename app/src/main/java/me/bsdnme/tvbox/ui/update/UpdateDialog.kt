@@ -1,5 +1,6 @@
 package me.bsdnme.tvbox.ui.update
 
+import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -44,63 +45,48 @@ fun UpdateDialogHost() {
     when (val state = UpdateCenter.uiState) {
         UpdateUiState.Hidden -> Unit
 
-        UpdateUiState.Checking -> {
+        UpdateUiState.Checking, is UpdateUiState.Result, is UpdateUiState.Available -> {
+            val available = state as? UpdateUiState.Available
+            val checking = state == UpdateUiState.Checking
             AlertDialog(
-                onDismissRequest = { UpdateCenter.dismiss(context) },
-                containerColor = XColors.SurfaceRaised,
-                text = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            color = XColors.Accent,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text("  正在检查更新…", style = MaterialTheme.typography.bodyMedium)
-                    }
+            modifier = Modifier.tvFocusBoundary(),
+                onDismissRequest = {
+                    if (available?.mandatory != true) UpdateCenter.dismiss(context)
                 },
-                confirmButton = {
-                    TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("取消") }
-                },
-            )
-        }
-
-        is UpdateUiState.Available -> {
-            AlertDialog(
-                onDismissRequest = { if (!state.mandatory) UpdateCenter.dismiss(context) },
                 containerColor = XColors.SurfaceRaised,
                 title = {
-                    Text(
-                        "发现新版本 v${state.info.versionName}",
-                        fontWeight = FontWeight.Bold,
-                        color = XColors.TextPrimary,
-                    )
+                    when (state) {
+                        is UpdateUiState.Available -> Text("发现新版本 v${state.info.versionName}", fontWeight = FontWeight.Bold, color = XColors.TextPrimary)
+                        is UpdateUiState.Result -> Text("检查更新", color = XColors.TextPrimary)
+                        else -> Unit
+                    }
                 },
                 text = {
-                    Column {
-                        if (state.mandatory) {
-                            Text(
-                                "此版本必须更新后才能继续使用",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = XColors.Danger,
-                            )
-                            Spacer(Modifier.height(8.dp))
+                    when (state) {
+                        UpdateUiState.Checking -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, color = XColors.Accent, modifier = Modifier.size(18.dp))
+                            Text("  正在检查更新…", style = MaterialTheme.typography.bodyMedium)
                         }
-                        if (state.info.changelog.isNotBlank()) {
-                            Text(
-                                state.info.changelog,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = XColors.TextSecondary,
-                            )
+                        is UpdateUiState.Result -> Text(state.message, color = XColors.TextSecondary)
+                        is UpdateUiState.Available -> Column {
+                            if (state.mandatory) {
+                                Text("此版本必须更新后才能继续使用", style = MaterialTheme.typography.bodySmall, color = XColors.Danger)
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            if (state.info.changelog.isNotBlank()) Text(state.info.changelog, style = MaterialTheme.typography.bodyMedium, color = XColors.TextSecondary)
                         }
+                        else -> Unit
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        UpdateCenter.startDownload(context, state.info, state.mandatory)
-                    }) { Text("立即更新", color = XColors.Accent) }
+                    when {
+                        available != null -> TextButton(onClick = { UpdateCenter.startDownload(context, available.info, available.mandatory) }) { Text("立即更新", color = XColors.Accent) }
+                        checking -> TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("取消") }
+                        else -> TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("知道了") }
+                    }
                 },
                 dismissButton = {
-                    if (!state.mandatory) {
+                    if (available != null && !available.mandatory) {
                         TextButton(onClick = { UpdateCenter.dismiss(context) }) { Text("以后再说") }
                     }
                 },
@@ -110,6 +96,7 @@ fun UpdateDialogHost() {
         is UpdateUiState.Downloading -> {
             val percent = (state.progress * 100).toInt()
             AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
                 onDismissRequest = { /* 下载中不允许点外部关闭，用取消按钮 */ },
                 containerColor = XColors.SurfaceRaised,
                 title = {
@@ -138,6 +125,7 @@ fun UpdateDialogHost() {
 
         is UpdateUiState.Failed -> {
             AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
                 onDismissRequest = { if (!state.mandatory) UpdateCenter.dismiss(context) },
                 containerColor = XColors.SurfaceRaised,
                 title = {

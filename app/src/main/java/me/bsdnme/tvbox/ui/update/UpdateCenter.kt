@@ -40,6 +40,7 @@ import java.io.File
 sealed interface UpdateUiState {
     data object Hidden : UpdateUiState
     data object Checking : UpdateUiState
+    data class Result(val message: String) : UpdateUiState
     data class Available(val info: UpdateInfo, val mandatory: Boolean) : UpdateUiState
     data class Downloading(val info: UpdateInfo, val progress: Float) : UpdateUiState
     data class Failed(val message: String, val info: UpdateInfo, val mandatory: Boolean) : UpdateUiState
@@ -64,6 +65,7 @@ object UpdateCenter {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloadJob: Job? = null
+    private var checkJob: Job? = null
     private data class DownloadedApk(val info: UpdateInfo, val file: File, val mandatory: Boolean)
     @Volatile private var downloadedApk: DownloadedApk? = null
     private var awaitingInstallPermission = false
@@ -144,7 +146,7 @@ object UpdateCenter {
             runCatching {
                 val info = UpdateApi.check()
                 val current = currentVersionCode(context)
-                if (info.versionCode > current && !isRemindSuppressed(context, info.versionCode)) {
+                if (uiState == UpdateUiState.Hidden && info.versionCode > current && !isRemindSuppressed(context, info.versionCode)) {
                     uiState = UpdateUiState.Available(info, mandatory(current, info))
                 }
             }
@@ -152,24 +154,27 @@ object UpdateCenter {
     }
 
     /**
-     * 设置页手动检查：结果以文案返回给调用方展示。
-     * 返回 null 表示发现新版本（弹窗接管），非 null 是「已是最新 / 失败原因」。
+     * 设置页手动检查：更新、已是最新和失败都由全局弹窗显示，
+     * 避免电视上结果落在屏幕外。
      */
-    suspend fun manualCheck(context: Context): String? {
+    fun manualCheck(context: Context) {
+        if (checkJob?.isActive == true) return
+        val appContext = context.applicationContext
         uiState = UpdateUiState.Checking
-        return try {
-            val info = withContext(Dispatchers.IO) { UpdateApi.check() }
-            val current = currentVersionCode(context)
-            if (info.versionCode > current) {
-                uiState = UpdateUiState.Available(info, mandatory(current, info))
-                null
-            } else {
-                uiState = UpdateUiState.Hidden
-                "已是最新版本 v${currentVersionName(context)}"
+        checkJob = scope.launch(Dispatchers.Main.immediate) {
+            try {
+                val info = withContext(Dispatchers.IO) { UpdateApi.check() }
+                val current = currentVersionCode(appContext)
+                uiState = if (info.versionCode > current) {
+                    UpdateUiState.Available(info, mandatory(current, info))
+                } else {
+                    UpdateUiState.Result("已是最新版本 v${currentVersionName(appContext)}")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                uiState = UpdateUiState.Result("检查失败：${e.message ?: "网络异常"}")
             }
-        } catch (e: Exception) {
-            uiState = UpdateUiState.Hidden
-            "检查失败：${e.message ?: "网络异常"}"
         }
     }
 
@@ -232,6 +237,10 @@ object UpdateCenter {
      */
     fun dismiss(context: Context) {
         val state = uiState
+        if (state == UpdateUiState.Checking) {
+            checkJob?.cancel()
+            checkJob = null
+        }
         val version = when (state) {
             is UpdateUiState.Available -> state.info.versionCode
             is UpdateUiState.Failed -> state.info.versionCode

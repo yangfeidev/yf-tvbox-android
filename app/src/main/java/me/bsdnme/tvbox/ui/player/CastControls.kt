@@ -1,5 +1,6 @@
 package me.bsdnme.tvbox.ui.player
 
+import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -102,6 +103,7 @@ internal fun CastControls(
 
     if (device == null) {
         AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
             onDismissRequest = { close() },
             title = { Text("选择投屏设备") },
             text = {

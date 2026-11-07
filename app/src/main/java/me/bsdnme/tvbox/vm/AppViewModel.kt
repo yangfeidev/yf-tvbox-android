@@ -191,14 +191,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 store.saveSubscriptions(next)
                 store.writeSubscriptionCache(id, raw)
                 store.activeSubscriptionId = id
+                val site = document.usableSites.firstOrNull { it.key == _state.value.settings.currentSiteKey }
+                    ?: document.usableSites.firstOrNull()
+                store.currentSiteKey = site?.key.orEmpty()
                 _state.update {
                     it.copy(
                         subscriptions = next,
-                        settings = it.settings.copy(activeSubscriptionId = id),
+                        document = document,
+                        currentSite = site,
+                        settings = it.settings.copy(activeSubscriptionId = id, currentSiteKey = site?.key.orEmpty()),
                         loading = false,
                     )
                 }
-                applyDocument(document)
                 AddResult.Success
             } catch (e: CancellationException) {
                 _state.update { it.copy(loading = false) }

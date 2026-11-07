@@ -2,6 +2,7 @@ package me.bsdnme.tvbox.ui.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -401,6 +403,7 @@ fun PlayerScreen(
     if (showSourcePicker || showEpisodePicker) {
         val choosingSource = showSourcePicker
         AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
             onDismissRequest = { showSourcePicker = false; showEpisodePicker = false },
             title = { Text(if (choosingSource) "切换线路" else "选择剧集") },
             text = {
@@ -462,7 +465,7 @@ fun PlayerScreen(
             .onPreviewKeyEvent { event ->
                 if (showCast || playError != null || showSourcePicker || showEpisodePicker) return@onPreviewKeyEvent false
                 val directionKey = event.key == Key.DirectionLeft || event.key == Key.DirectionRight
-                val repeatOnControls = directionKey && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount > 0
+                val repeatOnControls = directionKey && seekingKey == event.key && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount > 0
                 val finishingSeek = directionKey && event.type == KeyEventType.KeyUp && seekingKey == event.key
                 if (!playerHasFocus && !repeatOnControls && !finishingSeek) return@onPreviewKeyEvent false
                 when (event.key) {
@@ -529,6 +532,8 @@ fun PlayerScreen(
         Box(
             Modifier
                 .fillMaxSize()
+                // 这是触摸手势层，不应成为电视遥控器的焦点目标。
+                .focusProperties { canFocus = false }
                 .pointerInput(player, request.isLive, rawUrl, showCast, playError) {
                     var start = 0L
                     var totalDrag = 0f

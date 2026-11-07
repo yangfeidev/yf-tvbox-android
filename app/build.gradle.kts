@@ -16,8 +16,9 @@ android {
         // 老盒子（4.4）如果需要支持再单独降级评估
         minSdk = 24
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.0.11"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 18
+        versionName = "1.0.17"
         // 电视与手机同一个包，靠运行时分流布局
         resourceConfigurations += listOf("zh", "en")
     }
@@ -104,6 +105,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20240303")

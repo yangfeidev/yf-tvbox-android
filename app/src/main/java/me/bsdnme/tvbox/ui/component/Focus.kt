@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -13,6 +14,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.platform.LocalFocusManager
+import me.bsdnme.tvbox.core.theme.LocalFormFactor
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -64,8 +71,8 @@ fun FocusableSurface(
             }
             .onFocusChanged { focused = it.isFocused }
             .then(
-                if (focused) {
-                    Modifier.border(if (showBorder) borderWidth + 1.dp else 3.dp, Color.White, shape)
+                if (focused && borderWidth > 0.dp) {
+                    Modifier.border(if (showBorder) borderWidth + 1.dp else borderWidth, Color.White, shape)
                 } else {
                     Modifier
                 },
@@ -94,4 +101,27 @@ fun TapSurface(
     ) {
         content()
     }
+}
+
+/** 限制电视方向键在当前页面或弹窗内；边界没有目标时保留原焦点。 */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+fun Modifier.tvFocusBoundary(active: Boolean = true): Modifier = composed {
+    if (!active || !LocalFormFactor.current.isTv) return@composed this
+    val manager = LocalFocusManager.current
+    this
+        .onKeyEvent { event ->
+            val direction = when (event.key) {
+                Key.DirectionLeft -> FocusDirection.Left
+                Key.DirectionRight -> FocusDirection.Right
+                Key.DirectionUp -> FocusDirection.Up
+                Key.DirectionDown -> FocusDirection.Down
+                else -> null
+            }
+            if (direction == null) false else {
+                if (event.type == KeyEventType.KeyDown) manager.moveFocus(direction)
+                true
+            }
+        }
+        .focusProperties { exit = { FocusRequester.Cancel } }
+        .focusGroup()
 }
