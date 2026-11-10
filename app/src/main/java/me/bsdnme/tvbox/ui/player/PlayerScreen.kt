@@ -81,6 +81,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.PlayerView
 import me.bsdnme.tvbox.core.theme.XColors
+import me.bsdnme.tvbox.core.DeviceForm
 import me.bsdnme.tvbox.core.theme.XRadii
 import me.bsdnme.tvbox.data.model.Channel
 import me.bsdnme.tvbox.data.model.MediaDetail
@@ -129,7 +130,7 @@ data class PlaybackRequest(
  * - 上下键呼出控制层；OK 键在控制层隐藏时呼出，显示时暂停/播放
  * - 控制层出现时焦点自动落到播放/暂停主按钮，方向键随即在控制层内做焦点导航，
  *   可以上移到左上角返回按钮后按 OK 退出
- * - 返回键（Back）直接退出播放器
+ * - 手机和平板返回时先切回竖屏，再次返回退出；电视直接退出播放器
  * - 触摸端点一下视频区域切换控制层显隐，左右滑动预览并调整进度
  *
  * 控制层 4 秒无操作自动收起，但暂停时不收（否则用户看不到播放按钮）；
@@ -154,6 +155,8 @@ fun PlayerScreen(
     var previewTick by remember { mutableIntStateOf(0) }
     var showSourcePicker by remember { mutableStateOf(false) }
     var showEpisodePicker by remember { mutableStateOf(false) }
+    var showSpeedPicker by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableStateOf(1f) }
     var controlsVisible by remember { mutableStateOf(true) }
     var focusControls by remember { mutableStateOf(true) }
     // 用户操作计数：任何按键 / 点击 / 焦点移动都 +1，用来重置「4 秒自动收起」计时
@@ -163,8 +166,8 @@ fun PlayerScreen(
     val playerFocusRequester = remember { FocusRequester() }
     val errorFocusRequester = remember { FocusRequester() }
     val pickerFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(showSourcePicker, showEpisodePicker) {
-        if (showSourcePicker || showEpisodePicker) {
+    LaunchedEffect(showSourcePicker, showEpisodePicker, showSpeedPicker) {
+        if (showSourcePicker || showEpisodePicker || showSpeedPicker) {
             androidx.compose.runtime.withFrameNanos { }
             runCatching { pickerFocusRequester.requestFocus() }
         }
@@ -232,14 +235,25 @@ fun PlayerScreen(
         }
     }
 
-    // 播放器全屏横屏；退出时恢复原方向
+    // 播放器进入时横屏；离开时恢复进入前的方向设置。
     val activity = LocalContext.current as? Activity
+    val isTelevision = remember(context) { DeviceForm.isTelevision(context) }
+    var returnedToPortrait by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {
         val original = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
             activity?.requestedOrientation =
                 original ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    fun playerBack() {
+        if (!isTelevision && !returnedToPortrait && activity != null) {
+            returnedToPortrait = true
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            onClose()
         }
     }
 
@@ -352,8 +366,8 @@ fun PlayerScreen(
     }
 
     // 无操作自动收起：interactionTick 变化（任何用户操作）都会重置 4 秒倒计时
-    LaunchedEffect(controlsVisible, isPlaying, interactionTick, showSourcePicker, showEpisodePicker, seeking, showCast) {
-        if (controlsVisible && isPlaying && !showSourcePicker && !showEpisodePicker && !seeking && !showCast) {
+    LaunchedEffect(controlsVisible, isPlaying, interactionTick, showSourcePicker, showEpisodePicker, showSpeedPicker, seeking, showCast) {
+        if (controlsVisible && isPlaying && !showSourcePicker && !showEpisodePicker && !showSpeedPicker && !seeking && !showCast) {
             delay(4000)
             controlsVisible = false
             focusControls = false
@@ -390,7 +404,8 @@ fun PlayerScreen(
         when {
             showSourcePicker -> showSourcePicker = false
             showEpisodePicker -> showEpisodePicker = false
-            else -> onClose()
+            showSpeedPicker -> showSpeedPicker = false
+            else -> playerBack()
         }
     }
 
@@ -437,6 +452,33 @@ fun PlayerScreen(
         )
     }
 
+    if (showSpeedPicker) {
+        val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+        AlertDialog(
+            modifier = Modifier.tvFocusBoundary(),
+            onDismissRequest = { showSpeedPicker = false },
+            title = { Text("播放倍速") },
+            text = {
+                LazyColumn(Modifier.height(300.dp)) {
+                    itemsIndexed(speeds) { _, speed ->
+                        PickerOption(
+                            label = (if (speed == playbackSpeed) "✓ " else "") + "${speed}x",
+                            modifier = if (speed == playbackSpeed) Modifier.focusRequester(pickerFocusRequester) else Modifier,
+                            onClick = {
+                                player.setPlaybackSpeed(speed)
+                                playbackSpeed = speed
+                                showSpeedPicker = false
+                                interactionTick++
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSpeedPicker = false }) { Text("关闭") } },
+            containerColor = XColors.SurfaceRaised,
+        )
+    }
+
     fun canSeek(): Boolean = !request.isLive && !showCast && playError == null &&
         player.isCurrentMediaItemSeekable && player.duration > 0
 
@@ -463,7 +505,7 @@ fun PlayerScreen(
             .focusRequester(playerFocusRequester)
             .onFocusChanged { playerHasFocus = it.isFocused }
             .onPreviewKeyEvent { event ->
-                if (showCast || playError != null || showSourcePicker || showEpisodePicker) return@onPreviewKeyEvent false
+                if (showCast || playError != null || showSourcePicker || showEpisodePicker || showSpeedPicker) return@onPreviewKeyEvent false
                 val directionKey = event.key == Key.DirectionLeft || event.key == Key.DirectionRight
                 val repeatOnControls = directionKey && seekingKey == event.key && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount > 0
                 val finishingSeek = directionKey && event.type == KeyEventType.KeyUp && seekingKey == event.key
@@ -591,7 +633,7 @@ fun PlayerScreen(
                         TextButton(onClick = { playError = null; retryKey++ }) { Text("重试") }
                         if (sources.size > 1) TextButton(onClick = { showSourcePicker = true }) { Text("切换线路") }
                     }
-                    FocusableSurface(onClick = onClose, modifier = Modifier.focusRequester(errorFocusRequester), shape = RoundedCornerShape(XRadii.pill)) {
+                    FocusableSurface(onClick = { playerBack() }, modifier = Modifier.focusRequester(errorFocusRequester), shape = RoundedCornerShape(XRadii.pill)) {
                         Box(
                             Modifier
                                 .background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.pill))
@@ -612,7 +654,7 @@ fun PlayerScreen(
             TopBar(
                 title = request.title,
                 subtitle = request.channel?.group ?: episodes.getOrNull(episodeIndex)?.name.orEmpty(),
-                onBack = onClose,
+                onBack = { playerBack() },
                 // 焦点在控制条内移动时重置自动收起倒计时，避免导航到一半突然消失
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -649,6 +691,8 @@ fun PlayerScreen(
                     }
                 } else null,
                 onCast = if (url?.startsWith("http://", true) == true || url?.startsWith("https://", true) == true) ({ showCast = true }) else null,
+                onChooseSpeed = if (!request.isLive) ({ showSpeedPicker = true }) else null,
+                playbackSpeed = playbackSpeed,
                 onChooseSource = if (sources.size > 1) ({ showSourcePicker = true }) else null,
                 onChooseEpisode = if (episodes.size > 1) ({ showEpisodePicker = true }) else null,
                 focusRequester = playFocusRequester,
@@ -751,6 +795,8 @@ private fun BottomBar(
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
     onCast: (() -> Unit)?,
+    onChooseSpeed: (() -> Unit)?,
+    playbackSpeed: Float,
     onChooseSource: (() -> Unit)?,
     onChooseEpisode: (() -> Unit)?,
     focusRequester: FocusRequester? = null,
@@ -806,6 +852,7 @@ private fun BottomBar(
                     PlayerIcon(Icons.Outlined.SkipNext, "下一集", onNext, primary = false)
                 }
                 if (onCast != null) TextButton(onClick = onCast) { Text("投屏", color = XColors.TextPrimary) }
+                if (onChooseSpeed != null) TextButton(onClick = onChooseSpeed) { Text("${playbackSpeed}x", color = XColors.TextPrimary) }
                 if (onChooseSource != null) TextButton(onClick = onChooseSource) { Text("线路", color = XColors.TextPrimary) }
                 if (onChooseEpisode != null) TextButton(onClick = onChooseEpisode) { Text("选集", color = XColors.TextPrimary) }
             }
