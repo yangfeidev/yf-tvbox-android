@@ -2,12 +2,18 @@ package me.bsdnme.tvbox.ui.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
+import android.view.LayoutInflater
 import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +56,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +97,8 @@ import me.bsdnme.tvbox.data.net.Http
 import me.bsdnme.tvbox.data.net.VodApi
 import me.bsdnme.tvbox.ui.component.FocusableSurface
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -130,7 +139,7 @@ data class PlaybackRequest(
  * - 上下键呼出控制层；OK 键在控制层隐藏时呼出，显示时暂停/播放
  * - 控制层出现时焦点自动落到播放/暂停主按钮，方向键随即在控制层内做焦点导航，
  *   可以上移到左上角返回按钮后按 OK 退出
- * - 手机和平板返回时先切回竖屏，再次返回退出；电视直接退出播放器
+ * - 手机默认竖屏，横屏返回竖屏，竖屏返回系统画中画（可在设置中关闭）；电视直接退出播放器
  * - 触摸端点一下视频区域切换控制层显隐，左右滑动预览并调整进度
  *
  * 控制层 4 秒无操作自动收起，但暂停时不收（否则用户看不到播放按钮）；
@@ -140,6 +149,8 @@ data class PlaybackRequest(
 fun PlayerScreen(
     request: PlaybackRequest,
     onClose: () -> Unit,
+    systemPip: Boolean = false,
+    onMinimize: () -> Unit = onClose,
     onEpisodeChange: ((Int) -> Unit)? = null,
     onProgress: ((sourceName: String, episodeName: String, progress: Float) -> Unit)? = null,
 ) {
@@ -216,6 +227,35 @@ fun PlayerScreen(
         }
     }
 
+    // Android uses the active media session to provide playback controls in system PiP.
+    DisposableEffect(player) {
+        val session = MediaSession(context, "FeigePlayer")
+        session.setCallback(object : MediaSession.Callback() {
+            override fun onPlay() { player.play() }
+            override fun onPause() { player.pause() }
+            override fun onSeekTo(pos: Long) { if (player.isCurrentMediaItemSeekable) player.seekTo(pos) }
+        })
+        session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, request.title).build())
+        fun updateSession() {
+            val state = when {
+                player.playbackState == Player.STATE_BUFFERING && player.playWhenReady -> PlaybackState.STATE_BUFFERING
+                player.playWhenReady && player.playbackState != Player.STATE_ENDED -> PlaybackState.STATE_PLAYING
+                else -> PlaybackState.STATE_PAUSED
+            }
+            session.setPlaybackState(PlaybackState.Builder()
+                .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
+                    if (player.isCurrentMediaItemSeekable) PlaybackState.ACTION_SEEK_TO else 0L)
+                .setState(state, player.currentPosition.coerceAtLeast(0L), player.playbackParameters.speed).build())
+        }
+        val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) = updateSession()
+        }
+        player.addListener(listener)
+        session.isActive = true
+        updateSession()
+        onDispose { player.removeListener(listener); session.isActive = false; session.release() }
+    }
+
     // 播放或缓冲时保持屏幕唤醒；暂停、结束和离开播放器后恢复系统行为。
     val hostView = LocalView.current
     DisposableEffect(player, hostView) {
@@ -235,37 +275,38 @@ fun PlayerScreen(
         }
     }
 
-    // 播放器进入时横屏；离开时恢复进入前的方向设置。
+    // 手机默认竖屏播放，电视保持横屏；离开时恢复原方向。
     val activity = LocalContext.current as? Activity
     val isTelevision = remember(context) { DeviceForm.isTelevision(context) }
-    var returnedToPortrait by remember { mutableStateOf(false) }
+    var returnedToPortrait by remember { mutableStateOf(!isTelevision) }
     DisposableEffect(Unit) {
         val original = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
             activity?.requestedOrientation =
                 original ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
 
-    fun playerBack() {
-        if (!isTelevision && !returnedToPortrait && activity != null) {
-            returnedToPortrait = true
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        } else {
-            onClose()
-        }
+    LaunchedEffect(returnedToPortrait, systemPip) {
+        if (systemPip) return@LaunchedEffect
+        activity?.requestedOrientation = if (returnedToPortrait)
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
-    // 全屏播放隐藏系统栏（状态栏 + 导航栏），避免系统状态栏压在左上角返回按钮上；
-    // sticky 模式下从边缘滑入系统栏会短暂浮现又自动消失，退出播放器后恢复显示。
-    DisposableEffect(activity) {
+    fun playerBack() {
+        if (isTelevision) onClose()
+        else if (!returnedToPortrait) returnedToPortrait = true
+        else onMinimize()
+    }
+
+    // Keep the system edge gesture available while the player is expanded.
+    DisposableEffect(activity, systemPip, returnedToPortrait) {
         val controller = activity?.window?.let { WindowCompat.getInsetsController(it, hostView) }
-        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
-        onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
+        if (!systemPip && !returnedToPortrait) {
+            controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
         }
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
 
     // 播放错误要显式抛给 UI，否则只能看到一个永远转不出来的黑屏
@@ -400,7 +441,7 @@ fun PlayerScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = !systemPip) {
         when {
             showSourcePicker -> showSourcePicker = false
             showEpisodePicker -> showEpisodePicker = false
@@ -498,6 +539,10 @@ fun PlayerScreen(
         commitSeek(target)
     }
 
+    val gestureScope = rememberCoroutineScope()
+    var holdJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(Unit) { onDispose { holdJob?.cancel() } }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -560,7 +605,8 @@ fun PlayerScreen(
     ) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
+                (if (isTelevision) PlayerView(ctx) else
+                    LayoutInflater.from(ctx).inflate(me.bsdnme.tvbox.R.layout.player_texture_view, null) as PlayerView).apply {
                     useController = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                     this.player = player
@@ -569,6 +615,7 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
 
+        if (!systemPip) {
         // 触摸层：点一下切换控制条（触摸端没有焦点系统，靠这层呼出/收起）。
         // 控制条绘制在它之上，点在按钮上不会穿透到这层。
         Box(
@@ -576,6 +623,7 @@ fun PlayerScreen(
                 .fillMaxSize()
                 // 这是触摸手势层，不应成为电视遥控器的焦点目标。
                 .focusProperties { canFocus = false }
+                .padding(top = 28.dp)
                 .pointerInput(player, request.isLive, rawUrl, showCast, playError) {
                     var start = 0L
                     var totalDrag = 0f
@@ -606,9 +654,26 @@ fun PlayerScreen(
                         onDragCancel = { seeking = false; seekPreview = null; validDrag = false },
                     )
                 }
-                .clickable {
-                    interactionTick++
-                    controlsVisible = !controlsVisible
+                .pointerInput(player, request.isLive, showCast, playError) {
+                    detectTapGestures(
+                        onPress = {
+                            try { tryAwaitRelease() } finally { holdJob?.cancel(); holdJob = null }
+                        },
+                        onTap = { interactionTick++; controlsVisible = !controlsVisible },
+                        onDoubleTap = {
+                            if (player.isPlaying) player.pause() else player.play()
+                            interactionTick++
+                        },
+                        onLongPress = { offset ->
+                            if (canSeek()) {
+                                val direction = if (offset.x < size.width / 2f) -1 else 1
+                                holdJob?.cancel()
+                                holdJob = gestureScope.launch {
+                                    while (true) { seekBy(direction * 10); delay(500) }
+                                }
+                            }
+                        },
+                    )
                 },
         )
 
@@ -655,6 +720,8 @@ fun PlayerScreen(
                 title = request.title,
                 subtitle = request.channel?.group ?: episodes.getOrNull(episodeIndex)?.name.orEmpty(),
                 onBack = { playerBack() },
+                onToggleFullscreen = if (!isTelevision) ({ returnedToPortrait = !returnedToPortrait }) else null,
+                fullscreen = !returnedToPortrait,
                 // 焦点在控制条内移动时重置自动收起倒计时，避免导航到一半突然消失
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -715,6 +782,7 @@ fun PlayerScreen(
                 onDismiss = { showCast = false },
             )
         }
+        }
     }
 }
 
@@ -743,7 +811,7 @@ private fun PickerOption(label: String, onClick: () -> Unit, modifier: Modifier 
 }
 
 @Composable
-private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, onToggleFullscreen: (() -> Unit)?, fullscreen: Boolean, modifier: Modifier = Modifier) {
     // 状态栏内边距加在背景之后：半透明背景延伸到状态栏底下，内容不被状态栏压住
     Box(
         modifier = modifier
@@ -752,7 +820,7 @@ private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, modifier
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             FocusableSurface(onClick = onBack, shape = CircleShape, focusScale = 1.06f) {
                 Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
                     Icon(
@@ -764,7 +832,7 @@ private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, modifier
                 }
             }
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text(
                     title,
                     style = MaterialTheme.typography.titleMedium,
@@ -778,6 +846,9 @@ private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, modifier
                         maxLines = 1,
                     )
                 }
+            }
+            if (onToggleFullscreen != null) {
+                TextButton(onClick = onToggleFullscreen) { Text(if (fullscreen) "退出全屏" else "全屏", color = XColors.TextPrimary) }
             }
         }
     }
@@ -831,7 +902,7 @@ private fun BottomBar(
                 }
                 Spacer(Modifier.height(8.dp))
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onPrevious != null) {
                     PlayerIcon(Icons.Outlined.SkipPrevious, "上一集", onPrevious, primary = false)
                 }

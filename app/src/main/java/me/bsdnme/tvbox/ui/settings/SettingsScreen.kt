@@ -91,7 +91,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(state: AppUiState, vm: AppViewModel, familyMode: Boolean, onFamilyModeChange: (Boolean) -> Unit, onSiteChanged: () -> Unit) {
+fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: Boolean, onFloatingPlayerChange: (Boolean) -> Unit, familyMode: Boolean, onFamilyModeChange: (Boolean) -> Unit, onSiteChanged: () -> Unit) {
     val padding = LocalFormFactor.current.horizontalPadding
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
@@ -485,6 +485,14 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, familyMode: Boolean, onF
             FocusableSurface(onClick = { pinDialog = "change" }, shape = RoundedCornerShape(XRadii.pill), focusScale = 1.04f) {
                 Text("设置或修改 PIN", modifier = Modifier.background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.pill)).padding(horizontal = 18.dp, vertical = 10.dp))
             }
+        }
+        item {
+            SwitchRow(
+                label = "画中画播放",
+                description = "离开播放器或应用时，以系统小窗口继续播放",
+                checked = floatingPlayerEnabled,
+                onCheckedChange = onFloatingPlayerChange,
+            )
         }
         item {
             SwitchRow(

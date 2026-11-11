@@ -36,7 +36,6 @@ import me.bsdnme.tvbox.ui.home.HomeSnapshot
 import me.bsdnme.tvbox.ui.library.LibraryScreen
 import me.bsdnme.tvbox.ui.live.LiveScreen
 import me.bsdnme.tvbox.ui.player.PlaybackRequest
-import me.bsdnme.tvbox.ui.player.PlayerScreen
 import me.bsdnme.tvbox.ui.search.SearchScreen
 import me.bsdnme.tvbox.ui.settings.SettingsScreen
 import me.bsdnme.tvbox.ui.shell.AppShell
@@ -67,7 +66,15 @@ fun FeigeMediaApp(formFactor: FormFactor) {
     var focusHomeRequest by remember { mutableStateOf(0) }
     var detailTarget by remember { mutableStateOf<Pair<Site, MediaItem>?>(null) }
     var resumeFromHome by remember { mutableStateOf(false) }
-    var playback by remember { mutableStateOf<PlaybackRequest?>(null) }
+    val playerPrefs = remember { context.getSharedPreferences("player_preferences", android.content.Context.MODE_PRIVATE) }
+    var floatingPlayerEnabled by remember { mutableStateOf(playerPrefs.getBoolean("floating_player", true)) }
+    fun startPlayback(request: PlaybackRequest) {
+        me.bsdnme.tvbox.PlayerActivity.start(context, request, formFactor) { sourceName, episodeName, progress ->
+            val site = request.site
+            val detail = request.detail
+            if (site != null && detail != null) vm.recordHistory(detail.item, site, sourceName, episodeName, progress)
+        }
+    }
     var searchVisible by remember { mutableStateOf(false) }
     var restoreNavigationFocus by remember { mutableStateOf(0) }
     fun closeSearch() { searchVisible = false; restoreNavigationFocus++ }
@@ -78,7 +85,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
     }
     var confirmExit by remember { mutableStateOf(false) }
     val activity = LocalContext.current as? Activity
-    BackHandler(enabled = playback == null && detailTarget == null && !searchVisible && !confirmExit) {
+    BackHandler(enabled = detailTarget == null && !searchVisible && !confirmExit) {
         if (tab != Tab.Home) tab = Tab.Home else confirmExit = true
     }
     if (confirmExit) {
@@ -97,14 +104,14 @@ fun FeigeMediaApp(formFactor: FormFactor) {
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
-                .tvFocusBoundary(active = !searchVisible && detailTarget == null && playback == null),
+                .tvFocusBoundary(active = !searchVisible && detailTarget == null),
         ) {
             AppShell(
                 formFactor = formFactor,
                 selected = tab,
                 onSelect = { tab = it },
                 focusHomeRequest = focusHomeRequest,
-                navigationActive = !searchVisible && detailTarget == null && playback == null,
+                navigationActive = !searchVisible && detailTarget == null,
                 restoreNavigationFocus = restoreNavigationFocus,
             ) { current ->
                 when (current) {
@@ -130,7 +137,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                         state = state,
                         vm = vm,
                         onPlayChannel = { channel ->
-                            playback = PlaybackRequest(channel = channel)
+                            startPlayback(PlaybackRequest(channel = channel))
                         },
                     )
 
@@ -141,7 +148,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                         onOpenDetail = { site, item -> detailTarget = site to item },
                     )
 
-                    Tab.Settings -> SettingsScreen(state = state, vm = vm, familyMode = familyMode, onFamilyModeChange = { familyMode = it; modePrefs.edit().putBoolean("family", it).apply() }, onSiteChanged = {
+                    Tab.Settings -> SettingsScreen(state = state, vm = vm, floatingPlayerEnabled = floatingPlayerEnabled, onFloatingPlayerChange = { floatingPlayerEnabled = it; playerPrefs.edit().putBoolean("floating_player", it).apply() }, familyMode = familyMode, onFamilyModeChange = { familyMode = it; modePrefs.edit().putBoolean("family", it).apply() }, onSiteChanged = {
                         tab = Tab.Home
                         focusHomeRequest++
                     })
@@ -150,60 +157,41 @@ fun FeigeMediaApp(formFactor: FormFactor) {
         }
 
         if (searchVisible) {
-            BackHandler(enabled = detailTarget == null && playback == null) { closeSearch() }
+            BackHandler(enabled = detailTarget == null) { closeSearch() }
             Box(
                 Modifier
                     .fillMaxSize()
                     .background(XColors.Background)
                     .windowInsetsPadding(WindowInsets.systemBars)
                     .imePadding()
-                    .tvFocusBoundary(active = detailTarget == null && playback == null),
+                    .tvFocusBoundary(active = detailTarget == null),
             ) {
                 SearchScreen(
                     state = state,
                     familyMode = familyMode,
                     onOpenDetail = { site, item -> detailTarget = site to item },
                     onBack = { closeSearch() },
-                    isActive = detailTarget == null && playback == null,
+                    isActive = detailTarget == null,
                 )
             }
         }
 
         detailTarget?.let { (site, item) ->
-            BackHandler(enabled = playback == null) { closeDetail() }
-            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).tvFocusBoundary(active = playback == null)) {
+            BackHandler(enabled = true) { closeDetail() }
+            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).tvFocusBoundary(active = true)) {
                 DetailScreen(
                     vm = vm,
                     familyMode = familyMode,
                     site = site,
                     item = item,
                     onBack = { closeDetail() },
-                    onPlay = { request -> playback = request },
-                    isActive = playback == null,
+                    onPlay = { request -> startPlayback(request) },
+                    isActive = true,
                     autoResume = resumeFromHome,
                     onAutoResumeHandled = { resumeFromHome = false },
                 )
             }
         }
 
-        playback?.let { request ->
-            Box(Modifier.fillMaxSize().tvFocusBoundary()) {
-            PlayerScreen(
-                request = request,
-                onClose = {
-                    playback = null
-                    if (detailTarget == null && !searchVisible) restoreNavigationFocus++
-                },
-                onEpisodeChange = { },
-                onProgress = { sourceName, episodeName, progress ->
-                    val site = request.site
-                    val detail = request.detail
-                    if (site != null && detail != null) {
-                        vm.recordHistory(detail.item, site, sourceName, episodeName, progress)
-                    }
-                },
-            )
-            }
-        }
     }
 }

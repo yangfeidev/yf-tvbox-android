@@ -49,6 +49,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.FeigeMedia" />
+
         <receiver
             android:name=".ui.update.InstallStatusReceiver"
             android:exported="false" />

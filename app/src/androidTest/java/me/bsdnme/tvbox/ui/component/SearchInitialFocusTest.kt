@@ -48,7 +48,7 @@ class SearchInitialFocusTest {
                             Text("open", Modifier.focusRequester(homeFocus).clickable { searchVisible = true }.testTag("open"))
                         }
                         if (searchVisible) Box(Modifier.tvFocusBoundary()) {
-                            SearchScreen(state = AppUiState(), onOpenDetail = { _, _ -> })
+                            SearchScreen(state = AppUiState(), familyMode = true, onOpenDetail = { _, _ -> })
                         }
                     }
                     LaunchedEffect(Unit) { homeFocus.requestFocus() }
