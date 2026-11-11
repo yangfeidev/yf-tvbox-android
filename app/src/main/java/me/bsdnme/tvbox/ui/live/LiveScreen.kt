@@ -1,5 +1,7 @@
 package me.bsdnme.tvbox.ui.live
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -38,9 +41,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
@@ -64,6 +72,7 @@ import me.bsdnme.tvbox.ui.component.FocusableSurface
 import me.bsdnme.tvbox.ui.component.LoadingBox
 import me.bsdnme.tvbox.ui.component.PillChip
 import me.bsdnme.tvbox.vm.AppUiState
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -82,6 +91,8 @@ fun LiveScreen(
     state: AppUiState,
     vm: me.bsdnme.tvbox.vm.AppViewModel,
     onPlayChannel: (Channel) -> Unit,
+    isActive: Boolean = true,
+    onReturnNavigation: () -> Unit = {},
 ) {
     val formFactor = LocalFormFactor.current
     val padding = formFactor.horizontalPadding
@@ -95,9 +106,9 @@ fun LiveScreen(
         }.distinctBy { it.url }
     }
 
-    var sourceIndex by remember(sources.size) { mutableIntStateOf(0) }
+    var sourceIndex by rememberSaveable(sources.size) { mutableIntStateOf(0) }
     var groups by remember { mutableStateOf<List<ChannelGroup>>(emptyList()) }
-    var groupIndex by remember { mutableIntStateOf(0) }
+    var groupIndex by rememberSaveable { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
@@ -109,10 +120,10 @@ fun LiveScreen(
         loading = true
         error = null
         groups = emptyList()
-        groupIndex = 0
         try {
             val parsed = vm.loadLive(source.url, forceRefresh = reloadKey > 0)
             groups = parsed
+            groupIndex = groupIndex.coerceIn(0, (parsed.size - 1).coerceAtLeast(0))
             if (parsed.isEmpty()) {
                 error = "该直播源没有解析出可播放的频道"
             }
@@ -139,7 +150,7 @@ fun LiveScreen(
         FormFactor.Phone -> PhoneLayout(
             sources = sources,
             sourceIndex = sourceIndex,
-            onSelectSource = { sourceIndex = it },
+            onSelectSource = { if (sourceIndex != it) { sourceIndex = it; groupIndex = 0 } },
             groups = groups,
             groupIndex = groupIndex,
             onSelectGroup = { groupIndex = it },
@@ -153,7 +164,7 @@ fun LiveScreen(
         else -> WideLayout(
             sources = sources,
             sourceIndex = sourceIndex,
-            onSelectSource = { sourceIndex = it },
+            onSelectSource = { if (sourceIndex != it) { sourceIndex = it; groupIndex = 0 } },
             groups = groups,
             groupIndex = groupIndex,
             onSelectGroup = { groupIndex = it },
@@ -162,6 +173,8 @@ fun LiveScreen(
             onRetry = { reloadKey++ },
             onPlayChannel = onPlayChannel,
             padding = padding,
+            isActive = isActive,
+            onReturnNavigation = onReturnNavigation,
         )
     }
 }
@@ -259,9 +272,25 @@ private fun WideLayout(
     onRetry: () -> Unit,
     onPlayChannel: (Channel) -> Unit,
     padding: androidx.compose.ui.unit.Dp,
+    isActive: Boolean,
+    onReturnNavigation: () -> Unit,
 ) {
     val formFactor = LocalFormFactor.current
-    Row(Modifier.fillMaxSize()) {
+    val selectedGroupFocus = remember { FocusRequester() }
+    val groupList = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var pageHasFocus by remember { mutableStateOf(false) }
+    var channelsHaveFocus by remember { mutableStateOf(false) }
+    BackHandler(enabled = formFactor.isTv && isActive && pageHasFocus) {
+        if (channelsHaveFocus && groups.isNotEmpty()) {
+            scope.launch {
+                groupList.scrollToItem(groupIndex.coerceIn(0, groups.lastIndex))
+                androidx.compose.runtime.withFrameNanos { }
+                runCatching { selectedGroupFocus.requestFocus() }
+            }
+        } else onReturnNavigation()
+    }
+    Row(Modifier.fillMaxSize().onFocusChanged { pageHasFocus = it.hasFocus }.focusGroup()) {
         Column(
             modifier = Modifier
                 .width(if (formFactor.isTv) 240.dp else 200.dp)
@@ -287,6 +316,7 @@ private fun WideLayout(
                 Spacer(Modifier.height(12.dp))
             }
             LazyColumn(
+                state = groupList,
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -295,13 +325,13 @@ private fun WideLayout(
                         label = "${groups[index].name} ${groups[index].channels.size}",
                         selected = index == groupIndex,
                         onClick = { onSelectGroup(index) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().then(if (index == groupIndex) Modifier.focusRequester(selectedGroupFocus) else Modifier),
                         selectOnFocus = formFactor.isTv,
                     )
                 }
             }
         }
-        AdaptiveRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f)) {
+        AdaptiveRefreshBox(isRefreshing = loading, onRefresh = onRetry, modifier = Modifier.weight(1f).onFocusChanged { channelsHaveFocus = it.hasFocus }.focusGroup()) {
             when {
                 loading && groups.isEmpty() -> LiveLoading()
                 error != null -> EmptyState(

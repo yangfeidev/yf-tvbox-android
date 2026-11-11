@@ -86,10 +86,22 @@ if [ -n "$BASE_CODE" ] && [ "$VERSION_CODE" -le "$BASE_CODE" ] 2>/dev/null; then
       # versionName 末段同步 +1（1.0.7 → 1.0.8）：只加 versionCode 会让
       # APK 文件名和已发布版本撞车，覆盖同名 URL
       NEW_NAME=$(echo "$VERSION_NAME" | awk -F. -v OFS=. '{$NF=$NF+1; print}')
-      sed -i '' -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)$BASE_CODE$/\1$NEW_CODE/" "$GRADLE_FILE" \
-        || fail "versionCode 自动 +1 失败，请手动修改后重试"
-      sed -i '' -E "s/^(--*[[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"$VERSION_NAME\"/\1\"$NEW_NAME\"/" "$GRADLE_FILE" \
-        || fail "versionName 自动升级失败，请手动修改后重试"
+      python3 - "$GRADLE_FILE" "$VERSION_CODE" "$NEW_CODE" "$VERSION_NAME" "$NEW_NAME" <<'PY' || fail "版本号更新失败，请手动检查"
+from pathlib import Path
+import re
+import sys
+
+path, old_code, new_code, old_name, new_name = sys.argv[1:]
+file = Path(path)
+text = file.read_text(encoding="utf-8")
+code_pattern = r'(?m)^(\s*versionCode\s*=\s*)' + re.escape(old_code) + r'\s*$'
+name_pattern = r'(?m)^(\s*versionName\s*=\s*)"' + re.escape(old_name) + r'"\s*$'
+text, code_count = re.subn(code_pattern, lambda match: match.group(1) + new_code, text)
+text, name_count = re.subn(name_pattern, lambda match: match.group(1) + '"' + new_name + '"', text)
+if code_count != 1 or name_count != 1:
+    sys.exit("无法唯一匹配原版本号，未修改文件")
+file.write_text(text, encoding="utf-8")
+PY
       VERSION_CODE=$NEW_CODE
       VERSION_NAME="$NEW_NAME"
       echo "  versionCode: ${BASE_CODE} → ${NEW_CODE}，versionName → ${NEW_NAME}"
@@ -107,6 +119,16 @@ echo "→ 构建 release APK…"
 cd "$PROJECT_DIR"
 ./gradlew :app:assembleRelease -q || fail "构建失败"
 [ -f "$APK" ] || fail "找不到 $APK"
+python3 - "$PROJECT_DIR/app/build/outputs/apk/release/output-metadata.json" "$VERSION_CODE" "$VERSION_NAME" <<'PY' || fail "构建产物版本与待发布版本不一致"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as file:
+    metadata = json.load(file)
+elements = metadata.get("elements", [])
+if len(elements) != 1 or str(elements[0].get("versionCode")) != sys.argv[2] or elements[0].get("versionName") != sys.argv[3]:
+    sys.exit("APK 版本与更新清单不一致")
+PY
 echo "  $(du -h "$APK" | cut -f1) · $(shasum -a 256 "$APK" | cut -c1-16)…"
 
 # ── 3. 生成 update.json ──────────────────────────────────────────────────
@@ -145,6 +167,10 @@ echo "  $DL_BASE/$APP_ID/update.json"
 echo "  $DL_BASE/$APP_ID/$APK_NAME"
 
 # ── 5. 清理历史 APK（保留线上当前版本和最近的旧版）──────────────────────
+if [ "${SKIP_APK_CLEANUP:-0}" = "1" ]; then
+  echo "→ 保留所有历史 APK"
+  exit 0
+fi
 KEEP_APK_COUNT="${KEEP_APK_COUNT:-2}"
 ACCOUNT_ID="a8dd0cd54cec86b3c5d64bdc3136ab16"
 if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then

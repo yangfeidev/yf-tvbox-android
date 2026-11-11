@@ -14,18 +14,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
+import me.bsdnme.tvbox.ui.component.TvTextButton as TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,7 +62,9 @@ fun LibraryScreen(
 ) {
     val formFactor = LocalFormFactor.current
     val padding = formFactor.horizontalPadding
-    var showHistory by remember { mutableStateOf(false) }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
+    val historyGrid = rememberLazyGridState()
+    val favoritesGrid = rememberLazyGridState()
     var unavailable by remember { mutableStateOf(false) }
 
     if (unavailable) AlertDialog(
@@ -128,6 +132,7 @@ fun LibraryScreen(
                 )
             } else if (showHistory) {
                 LazyVerticalGrid(
+                    state = historyGrid,
                     columns = GridCells.Fixed(formFactor.gridColumns),
                     contentPadding = PaddingValues(horizontal = padding, vertical = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -150,6 +155,7 @@ fun LibraryScreen(
                 }
             } else {
                 LazyVerticalGrid(
+                    state = favoritesGrid,
                     columns = GridCells.Fixed(formFactor.gridColumns),
                     contentPadding = PaddingValues(horizontal = padding, vertical = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),

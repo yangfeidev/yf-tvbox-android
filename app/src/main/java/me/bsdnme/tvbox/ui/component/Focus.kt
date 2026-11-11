@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -18,6 +19,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import me.bsdnme.tvbox.core.theme.LocalFormFactor
 import androidx.compose.ui.draw.clip
@@ -34,6 +36,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.bsdnme.tvbox.core.theme.XColors
 import me.bsdnme.tvbox.core.theme.XRadii
+
+/** Tracks the actual focused control so overlays can return to their opener. */
+class TvFocusMemory {
+    var current: FocusRequester? = null
+}
+val LocalTvFocusMemory = staticCompositionLocalOf<TvFocusMemory?> { null }
 
 /**
  * 焦点容器 —— 电视端一切可点元素的基座。
@@ -56,20 +64,24 @@ fun FocusableSurface(
     borderWidth: Dp = 2.dp,
     enabled: Boolean = true,
     showBorder: Boolean = true,
+    propagateMinConstraints: Boolean = false,
     content: @Composable (focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val memory = LocalTvFocusMemory.current
+    val focusRequester = remember { FocusRequester() }
     val scale by animateFloatAsState(
         targetValue = if (focused) focusScale else 1f,
         label = "focusScale",
     )
     Box(
         modifier = modifier
+            .focusRequester(focusRequester)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) memory?.current = focusRequester }
             .then(
                 if (focused && borderWidth > 0.dp) {
                     Modifier.border(if (showBorder) borderWidth + 1.dp else borderWidth, Color.White, shape)
@@ -79,6 +91,7 @@ fun FocusableSurface(
             )
             .clip(shape)
             .clickable(enabled = enabled) { onClick() },
+        propagateMinConstraints = propagateMinConstraints,
     ) {
         content(focused)
     }

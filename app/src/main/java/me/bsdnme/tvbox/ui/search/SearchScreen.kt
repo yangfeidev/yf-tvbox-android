@@ -1,5 +1,6 @@
 package me.bsdnme.tvbox.ui.search
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -108,6 +109,10 @@ fun SearchScreen(
     var inputFocused by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    BackHandler(enabled = formFactor.isTv && isActive && (editing || imeVisible)) {
+        editing = false
+        keyboard?.hide()
+    }
     LaunchedEffect(editing) {
         if (editing && formFactor.isTv) {
             androidx.compose.runtime.withFrameNanos { }
@@ -115,7 +120,7 @@ fun SearchScreen(
         }
     }
     LaunchedEffect(formFactor, isActive) {
-        if (isActive && (!hasAutoFocused || formFactor == FormFactor.Television)) {
+        if (isActive && !hasAutoFocused) {
             androidx.compose.runtime.withFrameNanos { }
             val firstOpen = !hasAutoFocused
             runCatching { inputFocus.requestFocus() }

@@ -2,6 +2,8 @@ package me.bsdnme.tvbox.ui.settings
 
 import me.bsdnme.tvbox.ui.component.tvFocusBoundary
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
@@ -35,7 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import me.bsdnme.tvbox.ui.component.TvTextButton as TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -664,16 +666,24 @@ private fun SubscriptionTile(
 }
 
 @Composable
-private fun SwitchRow(
+internal fun SwitchRow(
     label: String,
     description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val television = LocalFormFactor.current.isTv
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(XRadii.md)
+    val focusStyle = if (television) Modifier
+        .onFocusChanged { focused = it.hasFocus }
+        .focusGroup()
+        .background(if (focused) XColors.SurfaceRaised else Color.Transparent, shape)
+        .border(if (focused) 3.dp else 0.dp, if (focused) Color.White else Color.Transparent, shape)
+        .padding(horizontal = 14.dp, vertical = 8.dp)
+    else Modifier.padding(vertical = 8.dp)
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().then(focusStyle),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -683,6 +693,7 @@ private fun SwitchRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            modifier = Modifier.semantics { contentDescription = label },
             colors = SwitchDefaults.colors(
                 checkedThumbColor = XColors.OnAccent,
                 checkedTrackColor = XColors.Accent,
@@ -719,6 +730,7 @@ private fun SettingsTextField(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var editing by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     LaunchedEffect(editing) {
         if (editing) {
@@ -729,7 +741,8 @@ private fun SettingsTextField(
     TextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.onFocusChanged { if (!it.isFocused) editing = false }
+        modifier = modifier.onFocusChanged { focused = it.isFocused; if (!it.isFocused) editing = false }
+            .then(if (television && focused) Modifier.border(3.dp, Color.White, shape) else Modifier)
             .onPreviewKeyEvent { event ->
                 if (!television || (editing && imeVisible) || event.type != KeyEventType.KeyDown) false
                 else when (event.key) {

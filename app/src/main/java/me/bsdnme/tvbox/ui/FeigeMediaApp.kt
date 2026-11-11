@@ -1,6 +1,7 @@
 package me.bsdnme.tvbox.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -11,8 +12,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import android.app.Activity
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import me.bsdnme.tvbox.ui.component.TvTextButton as TextButton
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,6 +23,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import me.bsdnme.tvbox.core.theme.FormFactor
@@ -28,6 +32,8 @@ import me.bsdnme.tvbox.core.theme.XColors
 import me.bsdnme.tvbox.data.model.MediaItem
 import me.bsdnme.tvbox.data.model.Site
 import me.bsdnme.tvbox.ui.component.tvFocusBoundary
+import me.bsdnme.tvbox.ui.component.TvFocusMemory
+import me.bsdnme.tvbox.ui.component.LocalTvFocusMemory
 import me.bsdnme.tvbox.ui.category.CategoryCache
 import me.bsdnme.tvbox.ui.category.CategoryScreen
 import me.bsdnme.tvbox.ui.detail.DetailScreen
@@ -51,6 +57,7 @@ import me.bsdnme.tvbox.vm.AppViewModel
  * 层叠顺序：Shell（含系统栏内边距）→ 详情（全屏）→ 播放（全屏，最上层）。
  * 系统栏内边距只加在 Shell 上，播放器要铺满整屏，不能被状态栏挤下去。
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun FeigeMediaApp(formFactor: FormFactor) {
     val vm: AppViewModel = viewModel()
@@ -77,16 +84,53 @@ fun FeigeMediaApp(formFactor: FormFactor) {
     }
     var searchVisible by remember { mutableStateOf(false) }
     var restoreNavigationFocus by remember { mutableStateOf(0) }
-    fun closeSearch() { searchVisible = false; restoreNavigationFocus++ }
+    val focusMemory = remember { TvFocusMemory() }
+    var shellReturnTarget by remember { mutableStateOf<FocusRequester?>(null) }
+    var searchReturnTarget by remember { mutableStateOf<FocusRequester?>(null) }
+    val shellFocus = remember { FocusRequester() }
+    val searchFocus = remember { FocusRequester() }
+    var restoreShellFocus by remember { mutableStateOf(0) }
+    var restoreSearchFocus by remember { mutableStateOf(0) }
+    fun saveFocus(requester: FocusRequester) {
+        if (formFactor.isTv) {
+            if (requester === shellFocus) shellReturnTarget = focusMemory.current else searchReturnTarget = focusMemory.current
+            runCatching { requester.saveFocusedChild() }
+        }
+    }
+    fun closeSearch() {
+        searchVisible = false
+        if (formFactor.isTv) restoreShellFocus++ else restoreNavigationFocus++
+    }
     fun closeDetail() {
         detailTarget = null
         resumeFromHome = false
-        if (!searchVisible) restoreNavigationFocus++
+        if (formFactor.isTv) {
+            if (searchVisible) restoreSearchFocus++ else restoreShellFocus++
+        } else if (!searchVisible) restoreNavigationFocus++
     }
+    LaunchedEffect(restoreShellFocus) {
+        if (restoreShellFocus > 0 && formFactor.isTv) {
+            androidx.compose.runtime.withFrameNanos { }
+            val restored = shellReturnTarget?.let { runCatching { it.requestFocus(); true }.getOrDefault(false) } == true
+            if (!restored && !runCatching { shellFocus.restoreFocusedChild() }.getOrDefault(false)) restoreNavigationFocus++
+        }
+    }
+    LaunchedEffect(restoreSearchFocus) {
+        if (restoreSearchFocus > 0 && formFactor.isTv) {
+            androidx.compose.runtime.withFrameNanos { }
+            val restored = searchReturnTarget?.let { runCatching { it.requestFocus(); true }.getOrDefault(false) } == true
+            if (!restored) runCatching { searchFocus.restoreFocusedChild() }
+        }
+    }
+    var contentHasFocus by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
     val activity = LocalContext.current as? Activity
     BackHandler(enabled = detailTarget == null && !searchVisible && !confirmExit) {
-        if (tab != Tab.Home) tab = Tab.Home else confirmExit = true
+        when {
+            formFactor.isTv && contentHasFocus -> restoreNavigationFocus++
+            tab != Tab.Home -> { tab = Tab.Home; if (formFactor.isTv) focusHomeRequest++ }
+            else -> confirmExit = true
+        }
     }
     if (confirmExit) {
         AlertDialog(
@@ -99,11 +143,14 @@ fun FeigeMediaApp(formFactor: FormFactor) {
         )
     }
 
+    CompositionLocalProvider(LocalTvFocusMemory provides focusMemory) {
     Box(Modifier.fillMaxSize().background(XColors.Background)) {
         Box(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
+                .focusRequester(shellFocus)
+                .focusGroup()
                 .tvFocusBoundary(active = !searchVisible && detailTarget == null),
         ) {
             AppShell(
@@ -113,14 +160,15 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                 focusHomeRequest = focusHomeRequest,
                 navigationActive = !searchVisible && detailTarget == null,
                 restoreNavigationFocus = restoreNavigationFocus,
+                onContentFocusChanged = { contentHasFocus = it },
             ) { current ->
                 when (current) {
                     Tab.Home -> HomeScreen(
                         state = state,
                         familyMode = familyMode,
-                        onOpenDetail = { site, item -> detailTarget = site to item },
-                        onResume = { site, item -> resumeFromHome = true; detailTarget = site to item },
-                        onOpenSearch = { searchVisible = true },
+                        onOpenDetail = { site, item -> saveFocus(shellFocus); detailTarget = site to item },
+                        onResume = { site, item -> saveFocus(shellFocus); resumeFromHome = true; detailTarget = site to item },
+                        onOpenSearch = { saveFocus(shellFocus); searchVisible = true },
                         onOpenSettings = { tab = Tab.Settings },
                         cache = homeCache,
                     )
@@ -128,14 +176,18 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                     Tab.Category -> CategoryScreen(
                         state = state,
                         cache = categoryCache,
+                        isActive = !searchVisible && detailTarget == null,
+                        onReturnNavigation = { restoreNavigationFocus++ },
                         familyMode = familyMode,
-                        onOpenDetail = { site, item -> detailTarget = site to item },
-                        onOpenSearch = { searchVisible = true },
+                        onOpenDetail = { site, item -> saveFocus(shellFocus); detailTarget = site to item },
+                        onOpenSearch = { saveFocus(shellFocus); searchVisible = true },
                     )
 
                     Tab.Live -> LiveScreen(
                         state = state,
                         vm = vm,
+                        isActive = !searchVisible && detailTarget == null,
+                        onReturnNavigation = { restoreNavigationFocus++ },
                         onPlayChannel = { channel ->
                             startPlayback(PlaybackRequest(channel = channel))
                         },
@@ -145,7 +197,7 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                         state = state,
                         vm = vm,
                         familyMode = familyMode,
-                        onOpenDetail = { site, item -> detailTarget = site to item },
+                        onOpenDetail = { site, item -> saveFocus(shellFocus); detailTarget = site to item },
                     )
 
                     Tab.Settings -> SettingsScreen(state = state, vm = vm, floatingPlayerEnabled = floatingPlayerEnabled, onFloatingPlayerChange = { floatingPlayerEnabled = it; playerPrefs.edit().putBoolean("floating_player", it).apply() }, familyMode = familyMode, onFamilyModeChange = { familyMode = it; modePrefs.edit().putBoolean("family", it).apply() }, onSiteChanged = {
@@ -164,12 +216,14 @@ fun FeigeMediaApp(formFactor: FormFactor) {
                     .background(XColors.Background)
                     .windowInsetsPadding(WindowInsets.systemBars)
                     .imePadding()
+                    .focusRequester(searchFocus)
+                    .focusGroup()
                     .tvFocusBoundary(active = detailTarget == null),
             ) {
                 SearchScreen(
                     state = state,
                     familyMode = familyMode,
-                    onOpenDetail = { site, item -> detailTarget = site to item },
+                    onOpenDetail = { site, item -> saveFocus(searchFocus); detailTarget = site to item },
                     onBack = { closeSearch() },
                     isActive = detailTarget == null,
                 )
@@ -193,5 +247,6 @@ fun FeigeMediaApp(formFactor: FormFactor) {
             }
         }
 
+    }
     }
 }

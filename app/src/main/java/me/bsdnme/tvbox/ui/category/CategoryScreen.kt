@@ -1,5 +1,7 @@
 package me.bsdnme.tvbox.ui.category
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -19,6 +21,8 @@ import me.bsdnme.tvbox.ui.component.AdaptiveRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import me.bsdnme.tvbox.core.theme.FormFactor
@@ -81,7 +85,7 @@ class CategoryPageState {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, MediaItem) -> Unit, onOpenSearch: () -> Unit, cache: CategoryCache) {
+fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, MediaItem) -> Unit, onOpenSearch: () -> Unit, cache: CategoryCache, isActive: Boolean = true, onReturnNavigation: () -> Unit = {}) {
     val form = LocalFormFactor.current
     val site = state.currentSite
     if (site == null) {
@@ -105,6 +109,20 @@ fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, 
     val pager = rememberPagerState(initialPage = initialPage, pageCount = { ids.size })
     val scope = rememberCoroutineScope()
     val tabs = rememberLazyListState()
+    val selectedTabFocus = remember { FocusRequester() }
+    var pageHasFocus by remember { mutableStateOf(false) }
+    var gridHasFocus by remember { mutableStateOf(false) }
+    BackHandler(enabled = form.isTv && isActive && pageHasFocus) {
+        if (gridHasFocus) {
+            scope.launch {
+                siteState.page(siteState.selected).grid.scrollToItem(0)
+                val index = ids.indexOf(siteState.selected).coerceAtLeast(0)
+                tabs.scrollToItem(index)
+                withFrameNanos { }
+                runCatching { selectedTabFocus.requestFocus() }
+            }
+        } else onReturnNavigation()
+    }
     LaunchedEffect(siteState.selected, ids) {
         val index = ids.indexOf(siteState.selected)
         if (form != FormFactor.Television && index >= 0) tabs.animateScrollToItem(index)
@@ -122,7 +140,7 @@ fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, 
             if (form != FormFactor.Television) scope.launch { pager.scrollToPage(index) }
         }
     }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().onFocusChanged { pageHasFocus = it.hasFocus }.focusGroup()) {
         Column(Modifier.padding(horizontal = form.horizontalPadding)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("分类", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
@@ -135,10 +153,10 @@ fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, 
             }
             Spacer(Modifier.height(12.dp))
             LazyRow(state = tabs, horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
-                item { PillChip("全部", siteState.selected.isEmpty(), onClick = { select(0) }, modifier = Modifier.onFocusChanged { if (form == FormFactor.Television && it.isFocused) select(0) }) }
+                item { PillChip("全部", siteState.selected.isEmpty(), onClick = { select(0) }, modifier = Modifier.then(if (siteState.selected.isEmpty()) Modifier.focusRequester(selectedTabFocus) else Modifier).onFocusChanged { if (form == FormFactor.Television && it.isFocused) select(0) }) }
                 items(siteState.categories, key = { it.typeId }) { category ->
                     val index = ids.indexOf(category.typeId)
-                    PillChip(category.name, siteState.selected == category.typeId, onClick = { select(index) }, modifier = Modifier.onFocusChanged { if (form == FormFactor.Television && it.isFocused) select(index) })
+                    PillChip(category.name, siteState.selected == category.typeId, onClick = { select(index) }, modifier = Modifier.then(if (siteState.selected == category.typeId) Modifier.focusRequester(selectedTabFocus) else Modifier).onFocusChanged { if (form == FormFactor.Television && it.isFocused) select(index) })
                 }
             }
             if (siteState.categoriesError != null) Text("分类加载失败，刷新重试", style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary)
@@ -146,7 +164,7 @@ fun CategoryScreen(state: AppUiState, familyMode: Boolean, onOpenDetail: (Site, 
         if (form == FormFactor.Television) {
             val id = siteState.selected
             val pageState = remember(siteState, id) { siteState.page(id) }
-            Box(Modifier.weight(1f)) {
+            Box(Modifier.weight(1f).onFocusChanged { gridHasFocus = it.hasFocus }.focusGroup()) {
                 CategoryPage(site, id, siteState.categories, pageState, familyMode, active = true, onOpenDetail = onOpenDetail,
                     onRetryCategories = { if (!siteState.categoriesLoaded) categoriesRetry++ })
             }

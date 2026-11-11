@@ -1,5 +1,6 @@
 package me.bsdnme.tvbox.ui.shell
 
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,12 +76,13 @@ fun AppShell(
     focusHomeRequest: Int = 0,
     navigationActive: Boolean = true,
     restoreNavigationFocus: Int = 0,
+    onContentFocusChanged: (Boolean) -> Unit = {},
     content: @Composable (Tab) -> Unit,
 ) {
     when (formFactor) {
         FormFactor.Phone -> PhoneShell(selected, onSelect, content)
-        FormFactor.Tablet -> SidebarShell(selected, onSelect, content, wide = true, focusHomeRequest = focusHomeRequest, navigationActive = navigationActive, restoreNavigationFocus = restoreNavigationFocus)
-        FormFactor.Television -> SidebarShell(selected, onSelect, content, wide = false, focusHomeRequest = focusHomeRequest, navigationActive = navigationActive, restoreNavigationFocus = restoreNavigationFocus)
+        FormFactor.Tablet -> SidebarShell(selected, onSelect, content, wide = true, focusHomeRequest = focusHomeRequest, navigationActive = navigationActive, restoreNavigationFocus = restoreNavigationFocus, onContentFocusChanged = onContentFocusChanged)
+        FormFactor.Television -> SidebarShell(selected, onSelect, content, wide = false, focusHomeRequest = focusHomeRequest, navigationActive = navigationActive, restoreNavigationFocus = restoreNavigationFocus, onContentFocusChanged = onContentFocusChanged)
     }
 }
 
@@ -158,6 +161,7 @@ private fun SidebarShell(
     focusHomeRequest: Int,
     navigationActive: Boolean,
     restoreNavigationFocus: Int,
+    onContentFocusChanged: (Boolean) -> Unit,
 ) {
     val homeFocus = remember { FocusRequester() }
     val selectedFocus = remember { FocusRequester() }
@@ -170,6 +174,7 @@ private fun SidebarShell(
     LaunchedEffect(focusHomeRequest, wide) {
         if (!wide && focusHomeRequest > 0) runCatching { homeFocus.requestFocus() }
     }
+    val stateHolder = rememberSaveableStateHolder()
     val railWidth = if (wide) 200.dp else 96.dp
     Row(Modifier.fillMaxSize().background(XColors.Background)) {
         Column(
@@ -201,7 +206,8 @@ private fun SidebarShell(
                 )
             }
         }
-        Box(Modifier.weight(1f)) { content(selected) }
+        val contentModifier = if (!wide) Modifier.onFocusChanged { onContentFocusChanged(it.hasFocus) }.focusGroup() else Modifier
+        Box(Modifier.weight(1f).then(contentModifier)) { stateHolder.SaveableStateProvider(selected) { content(selected) } }
     }
 }
 
@@ -220,7 +226,7 @@ private fun RailItem(
         modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocus() },
         shape = RoundedCornerShape(XRadii.md),
         focusScale = 1.04f,
-        borderWidth = if (wide) 2.dp else 0.dp,
+        borderWidth = 2.dp,
     ) {
         Row(
             modifier = Modifier

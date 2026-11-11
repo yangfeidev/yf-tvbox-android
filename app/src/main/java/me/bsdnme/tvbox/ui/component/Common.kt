@@ -137,8 +137,9 @@ fun PillChip(
         modifier = modifier.onFocusChanged { if (selectOnFocus && it.isFocused && !selected) onClick() },
         shape = shape,
         focusScale = 1.04f,
-        borderWidth = if (selectOnFocus) 0.dp else 2.dp,
+        borderWidth = 2.dp,
         showBorder = true,
+        propagateMinConstraints = true,
     ) {
         Row(
             modifier = Modifier

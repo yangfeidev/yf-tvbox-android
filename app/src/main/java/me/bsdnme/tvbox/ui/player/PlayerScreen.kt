@@ -42,8 +42,9 @@ import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
+import me.bsdnme.tvbox.ui.component.TvTextButton as TextButton
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -145,6 +146,7 @@ data class PlaybackRequest(
  * 控制层 4 秒无操作自动收起，但暂停时不收（否则用户看不到播放按钮）；
  * 显示期间的任何按键 / 点击 / 焦点移动都会重置倒计时。
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun PlayerScreen(
     request: PlaybackRequest,
@@ -155,6 +157,7 @@ fun PlayerScreen(
     onProgress: ((sourceName: String, episodeName: String, progress: Float) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val isTelevision = remember(context) { DeviceForm.isTelevision(context) }
     var episodeIndex by remember { mutableIntStateOf(request.episodeIndex) }
     var sourceIndex by remember { mutableIntStateOf(request.sourceIndex) }
     var retryKey by remember { mutableIntStateOf(0) }
@@ -177,6 +180,18 @@ fun PlayerScreen(
     val playerFocusRequester = remember { FocusRequester() }
     val errorFocusRequester = remember { FocusRequester() }
     val pickerFocusRequester = remember { FocusRequester() }
+    val sourceButtonFocus = remember { FocusRequester() }
+    val episodeButtonFocus = remember { FocusRequester() }
+    val speedButtonFocus = remember { FocusRequester() }
+    var pickerReturnFocus by remember { mutableStateOf<FocusRequester?>(null) }
+    LaunchedEffect(showSourcePicker, showEpisodePicker, showSpeedPicker, showCast) {
+        if (isTelevision && !showSourcePicker && !showEpisodePicker && !showSpeedPicker && !showCast && pickerReturnFocus != null) {
+            androidx.compose.runtime.withFrameNanos { }
+            runCatching { pickerReturnFocus?.requestFocus() }
+            pickerReturnFocus = null
+            interactionTick++
+        }
+    }
     LaunchedEffect(showSourcePicker, showEpisodePicker, showSpeedPicker) {
         if (showSourcePicker || showEpisodePicker || showSpeedPicker) {
             androidx.compose.runtime.withFrameNanos { }
@@ -277,7 +292,6 @@ fun PlayerScreen(
 
     // 手机默认竖屏播放，电视保持横屏；离开时恢复原方向。
     val activity = LocalContext.current as? Activity
-    val isTelevision = remember(context) { DeviceForm.isTelevision(context) }
     var returnedToPortrait by remember { mutableStateOf(!isTelevision) }
     DisposableEffect(Unit) {
         val original = activity?.requestedOrientation
@@ -446,6 +460,11 @@ fun PlayerScreen(
             showSourcePicker -> showSourcePicker = false
             showEpisodePicker -> showEpisodePicker = false
             showSpeedPicker -> showSpeedPicker = false
+            isTelevision && controlsVisible && playError == null && !showCast -> {
+                controlsVisible = false
+                focusControls = false
+                runCatching { playerFocusRequester.requestFocus() }
+            }
             else -> playerBack()
         }
     }
@@ -463,10 +482,12 @@ fun PlayerScreen(
             onDismissRequest = { showSourcePicker = false; showEpisodePicker = false },
             title = { Text(if (choosingSource) "切换线路" else "选择剧集") },
             text = {
-                LazyColumn(Modifier.height(300.dp)) {
+                val selectedIndex = if (choosingSource) sourceIndex else episodeIndex
+                val listState = androidx.compose.runtime.key(choosingSource) { rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex.coerceAtLeast(0)) }
+                LazyColumn(Modifier.height(300.dp), state = listState) {
                     if (choosingSource) itemsIndexed(sources) { index, source ->
                         PickerOption(label = (if (index == sourceIndex) "✓ " else "") + source.name,
-                            modifier = if (index == 0) Modifier.focusRequester(pickerFocusRequester) else Modifier, onClick = {
+                            modifier = if (index == sourceIndex) Modifier.focusRequester(pickerFocusRequester) else Modifier, onClick = {
                             if (index != sourceIndex) {
                                 saveProgress()
                                 val episodeName = episodes.getOrNull(episodeIndex)?.name
@@ -481,7 +502,7 @@ fun PlayerScreen(
                         })
                     } else itemsIndexed(episodes) { index, episode ->
                         PickerOption(label = (if (index == episodeIndex) "✓ " else "") + episode.name,
-                            modifier = if (index == 0) Modifier.focusRequester(pickerFocusRequester) else Modifier, onClick = {
+                            modifier = if (index == episodeIndex) Modifier.focusRequester(pickerFocusRequester) else Modifier, onClick = {
                             if (index != episodeIndex) { saveProgress(); pendingResume = 0f; played = false; episodeIndex = index }
                             showEpisodePicker = false
                         })
@@ -500,7 +521,8 @@ fun PlayerScreen(
             onDismissRequest = { showSpeedPicker = false },
             title = { Text("播放倍速") },
             text = {
-                LazyColumn(Modifier.height(300.dp)) {
+                val speedList = rememberLazyListState(initialFirstVisibleItemIndex = speeds.indexOf(playbackSpeed).coerceAtLeast(0))
+                LazyColumn(Modifier.height(300.dp), state = speedList) {
                     itemsIndexed(speeds) { _, speed ->
                         PickerOption(
                             label = (if (speed == playbackSpeed) "✓ " else "") + "${speed}x",
@@ -758,11 +780,14 @@ fun PlayerScreen(
                     }
                 } else null,
                 onCast = if (url?.startsWith("http://", true) == true || url?.startsWith("https://", true) == true) ({ showCast = true }) else null,
-                onChooseSpeed = if (!request.isLive) ({ showSpeedPicker = true }) else null,
+                onChooseSpeed = if (!request.isLive) ({ pickerReturnFocus = speedButtonFocus; showSpeedPicker = true }) else null,
                 playbackSpeed = playbackSpeed,
-                onChooseSource = if (sources.size > 1) ({ showSourcePicker = true }) else null,
-                onChooseEpisode = if (episodes.size > 1) ({ showEpisodePicker = true }) else null,
+                onChooseSource = if (sources.size > 1) ({ pickerReturnFocus = sourceButtonFocus; showSourcePicker = true }) else null,
+                onChooseEpisode = if (episodes.size > 1) ({ pickerReturnFocus = episodeButtonFocus; showEpisodePicker = true }) else null,
                 focusRequester = playFocusRequester,
+                sourceButtonFocus = sourceButtonFocus,
+                episodeButtonFocus = episodeButtonFocus,
+                speedButtonFocus = speedButtonFocus,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onFocusChanged { if (it.hasFocus) interactionTick++ },
@@ -871,6 +896,9 @@ private fun BottomBar(
     onChooseSource: (() -> Unit)?,
     onChooseEpisode: (() -> Unit)?,
     focusRequester: FocusRequester? = null,
+    sourceButtonFocus: FocusRequester,
+    episodeButtonFocus: FocusRequester,
+    speedButtonFocus: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -923,9 +951,9 @@ private fun BottomBar(
                     PlayerIcon(Icons.Outlined.SkipNext, "下一集", onNext, primary = false)
                 }
                 if (onCast != null) TextButton(onClick = onCast) { Text("投屏", color = XColors.TextPrimary) }
-                if (onChooseSpeed != null) TextButton(onClick = onChooseSpeed) { Text("${playbackSpeed}x", color = XColors.TextPrimary) }
-                if (onChooseSource != null) TextButton(onClick = onChooseSource) { Text("线路", color = XColors.TextPrimary) }
-                if (onChooseEpisode != null) TextButton(onClick = onChooseEpisode) { Text("选集", color = XColors.TextPrimary) }
+                if (onChooseSpeed != null) TextButton(onClick = onChooseSpeed, modifier = Modifier.focusRequester(speedButtonFocus)) { Text("${playbackSpeed}x", color = XColors.TextPrimary) }
+                if (onChooseSource != null) TextButton(onClick = onChooseSource, modifier = Modifier.focusRequester(sourceButtonFocus)) { Text("线路", color = XColors.TextPrimary) }
+                if (onChooseEpisode != null) TextButton(onClick = onChooseEpisode, modifier = Modifier.focusRequester(episodeButtonFocus)) { Text("选集", color = XColors.TextPrimary) }
             }
         }
     }
