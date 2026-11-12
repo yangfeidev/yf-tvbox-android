@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import me.bsdnme.tvbox.data.Analytics
 import me.bsdnme.tvbox.core.DeviceForm
 import me.bsdnme.tvbox.core.theme.FeigeMediaTheme
 import me.bsdnme.tvbox.core.theme.XColors
@@ -58,6 +59,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
 
         setContent {
+            LaunchedEffect(Unit) {
+                Analytics.report(applicationContext)
+            }
             val vm: AppViewModel = viewModel()
             val state by vm.state.collectAsStateWithLifecycle()
             val forceTelevision = state.settings.forceTelevision

@@ -1,0 +1,39 @@
+{
+  "name": "feige-install-analytics",
+  "workers_dev": true,
+  "main": "src/index.js",
+  "routes": [
+    { "pattern": "analytics.bsdnme.me", "custom_domain": true }
+  ],
+  "compatibility_date": "2026-11-12",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "feige-install-analytics",
+      "database_id": "a846ea07-165e-4853-81fa-2d0504700274",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "preview_urls": false,
+  "ratelimits": [
+    {
+      "name": "REPORT_LIMIT",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "ADMIN_LIMIT",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ]
+}
