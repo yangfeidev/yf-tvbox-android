@@ -42,8 +42,8 @@ def list_objects(account, bucket, prefix, token):
 
 
 def select_old(objects, prefix, current, keep):
-    if keep < 2:
-        raise ValueError('至少保留当前版本和一个历史版本（KEEP_APK_COUNT >= 2）')
+    if keep < 1:
+        raise ValueError('至少保留当前版本（KEEP_APK_COUNT >= 1）')
     candidates = []
     for obj in objects:
         key = obj.get('key', '')
@@ -64,7 +64,7 @@ def main():
     parser.add_argument('--app', required=True)
     parser.add_argument('--base-url', required=True)
     parser.add_argument('--wrangler', required=True)
-    parser.add_argument('--keep', type=int, default=2)
+    parser.add_argument('--keep', type=int, default=1)
     parser.add_argument('--expected-apk', help='本次发布的文件名；与线上清单不一致时停止')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()

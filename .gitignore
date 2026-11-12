@@ -12,3 +12,6 @@ captures/
 .workbuddy/
 keystore/
 .cf-cli/
+.wrangler/
+__pycache__/
+*.pyc

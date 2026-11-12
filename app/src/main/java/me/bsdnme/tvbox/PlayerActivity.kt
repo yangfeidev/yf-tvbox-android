@@ -76,12 +76,6 @@ class PlayerActivity : ComponentActivity() {
         inPip = isInPictureInPictureMode
     }
 
-    override fun onStop() {
-        super.onStop()
-        // PiP remains started while visible; dismissal (or leaving with PiP disabled) stops it.
-        if (!isChangingConfigurations) finish()
-    }
-
     override fun onDestroy() {
         if (active?.get() === this) { active = null; bridge = null }
         super.onDestroy()

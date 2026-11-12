@@ -49,7 +49,7 @@ fail() { echo "✘ $1"; exit 1; }
 # 注意：不要把 R2 专用 Token export 进 ~/.zshrc，否则所有 wrangler 命令
 # （Workers / Pages 部署等）都会改用这个权限受限的 Token。
 if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-  LOCAL_TOKEN=$(grep -E '^cloudflare\.apiToken=' "$PROJECT_DIR/local.properties" 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]')
+  LOCAL_TOKEN=$(grep -E '^cloudflare\.apiToken=' "$PROJECT_DIR/local.properties" 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]' || true)
   if [ -n "$LOCAL_TOKEN" ]; then CLOUDFLARE_API_TOKEN="$LOCAL_TOKEN"; fi
 fi
 if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
@@ -166,12 +166,12 @@ echo "✔ 上传完成 v$VERSION_NAME ($VERSION_CODE)"
 echo "  $DL_BASE/$APP_ID/update.json"
 echo "  $DL_BASE/$APP_ID/$APK_NAME"
 
-# ── 5. 清理历史 APK（保留线上当前版本和最近的旧版）──────────────────────
+# ── 5. 清理历史 APK（默认仅保留线上当前版本）────────────────────────────
 if [ "${SKIP_APK_CLEANUP:-0}" = "1" ]; then
   echo "→ 保留所有历史 APK"
   exit 0
 fi
-KEEP_APK_COUNT="${KEEP_APK_COUNT:-2}"
+KEEP_APK_COUNT="${KEEP_APK_COUNT:-1}"
 ACCOUNT_ID="a8dd0cd54cec86b3c5d64bdc3136ab16"
 if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
   CLOUDFLARE_API_TOKEN=$(grep '^oauth_token' "$HOME/Library/Preferences/.wrangler/config/default.toml" | cut -d'"' -f2) || fail "发布成功，但读取清理凭据失败"

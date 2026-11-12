@@ -47,6 +47,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -88,6 +90,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.PlayerView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import me.bsdnme.tvbox.core.theme.XColors
 import me.bsdnme.tvbox.core.DeviceForm
 import me.bsdnme.tvbox.core.theme.XRadii
@@ -205,6 +210,8 @@ fun PlayerScreen(
     val currentEpisode by rememberUpdatedState(episodeIndex)
     val currentSource by rememberUpdatedState(sourceIndex)
     val progressCallback by rememberUpdatedState(onProgress)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumeAfterBackground by remember { mutableStateOf(false) }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(true) }
@@ -234,11 +241,52 @@ fun PlayerScreen(
         onDispose {
             if (!request.isLive && played && pendingResume == 0f) {
                 val length = player.duration
-                val progress = if (length > 0) (player.currentPosition.toFloat() / length).coerceIn(0f, 1f) else 0f
-                val source = sources.getOrNull(currentSource)
-                progressCallback?.invoke(source?.name.orEmpty(), source?.episodes?.getOrNull(currentEpisode)?.name.orEmpty(), progress)
+                if (length > 0) {
+                    val progress = (player.currentPosition.toFloat() / length).coerceIn(0f, 1f)
+                    val source = sources.getOrNull(currentSource)
+                    progressCallback?.invoke(source?.name.orEmpty(), source?.episodes?.getOrNull(currentEpisode)?.name.orEmpty(), progress)
+                }
             }
             player.release()
+        }
+    }
+
+    // PiP remains started while visible; only pause when the player actually stops.
+    DisposableEffect(player, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    if (!request.isLive && played && pendingResume == 0f && player.duration > 0) {
+                        val source = sources.getOrNull(currentSource)
+                        progressCallback?.invoke(source?.name.orEmpty(), source?.episodes?.getOrNull(currentEpisode)?.name.orEmpty(),
+                            (player.currentPosition.toFloat() / player.duration).coerceIn(0f, 1f))
+                    }
+                    resumeAfterBackground = player.playWhenReady
+                    player.pause()
+                }
+                Lifecycle.Event.ON_START -> {
+                    if (resumeAfterBackground) {
+                        resumeAfterBackground = false
+                        player.play()
+                    }
+                }
+                else -> Unit
+            }
+        }
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (!playWhenReady && !request.isLive && played && pendingResume == 0f && player.duration > 0) {
+                    val source = sources.getOrNull(currentSource)
+                    progressCallback?.invoke(source?.name.orEmpty(), source?.episodes?.getOrNull(currentEpisode)?.name.orEmpty(),
+                        (player.currentPosition.toFloat() / player.duration).coerceIn(0f, 1f))
+                }
+            }
+        }
+        player.addListener(listener)
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            player.removeListener(listener)
         }
     }
 
@@ -334,7 +382,6 @@ fun PlayerScreen(
                     retried = true
                     player.setMediaItem(buildMediaItem(url, !initialHls(url, request.isLive)))
                     player.prepare()
-                    player.play()
                     return
                 }
                 playError = when (error.errorCode) {
@@ -395,7 +442,6 @@ fun PlayerScreen(
             httpFactory.setDefaultRequestProperties(playback.headers)
             player.setMediaItem(buildMediaItem(playback.url, initialHls(playback.url, request.isLive)))
             player.prepare()
-            player.play()
         }.onFailure { playError = "播放失败：${it.message}" }
     }
 
@@ -407,7 +453,7 @@ fun PlayerScreen(
             isPlaying = player.isPlaying
             if (player.isPlaying && !played && !request.isLive) {
                 played = true
-                if (pendingResume == 0f) progressCallback?.invoke(sources.getOrNull(sourceIndex)?.name.orEmpty(), latestEpisodes.getOrNull(episodeIndex)?.name.orEmpty(), if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f)
+                if (pendingResume == 0f && duration > 0) progressCallback?.invoke(sources.getOrNull(sourceIndex)?.name.orEmpty(), latestEpisodes.getOrNull(episodeIndex)?.name.orEmpty(), (position.toFloat() / duration).coerceIn(0f, 1f))
             }
             delay(500)
         }
@@ -470,9 +516,9 @@ fun PlayerScreen(
     }
 
     fun saveProgress() {
-        if (played && duration > 0 && pendingResume == 0f) onProgress?.invoke(
+        if (!request.isLive && played && player.duration > 0 && pendingResume == 0f) onProgress?.invoke(
             sources.getOrNull(sourceIndex)?.name.orEmpty(), episodes.getOrNull(episodeIndex)?.name.orEmpty(),
-            (position.toFloat() / duration).coerceIn(0f, 1f))
+            (player.currentPosition.toFloat() / player.duration).coerceIn(0f, 1f))
     }
 
     if (showSourcePicker || showEpisodePicker) {
@@ -548,6 +594,10 @@ fun PlayerScreen(
     fun commitSeek(target: Long) {
         player.seekTo(target)
         position = target
+        if (!request.isLive && played && player.duration > 0 && pendingResume == 0f) {
+            progressCallback?.invoke(sources.getOrNull(sourceIndex)?.name.orEmpty(), episodes.getOrNull(episodeIndex)?.name.orEmpty(),
+                (target.toFloat() / player.duration).coerceIn(0f, 1f))
+        }
         interactionTick++
         seeking = false
         previewTick++
@@ -754,6 +804,19 @@ fun PlayerScreen(
                 duration = seekPreview?.duration ?: duration,
                 isPlaying = isPlaying,
                 isLive = request.isLive,
+                seekEnabled = canSeek(),
+                onSeekPreview = { target ->
+                    if (canSeek()) {
+                        val start = if (seeking) seekPreview?.start ?: player.currentPosition else player.currentPosition
+                        seeking = true
+                        seekPreview = SeekPreview(start.coerceIn(0L, player.duration), target.coerceIn(0L, player.duration), player.duration)
+                        interactionTick++
+                    }
+                },
+                onSeekFinished = {
+                    if (seeking && canSeek()) seekPreview?.let { commitSeek(it.target) }
+                    else { seeking = false; seekPreview = null }
+                },
                 onSeek = { seekBy(-10) },
                 onSeekForward = { seekBy(10) },
                 onTogglePlay = {
@@ -879,12 +942,16 @@ private fun TopBar(title: String, subtitle: String, onBack: () -> Unit, onToggle
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BottomBar(
     position: Long,
     duration: Long,
     isPlaying: Boolean,
     isLive: Boolean,
+    seekEnabled: Boolean,
+    onSeekPreview: (Long) -> Unit,
+    onSeekFinished: () -> Unit,
     onSeek: () -> Unit,
     onSeekForward: () -> Unit,
     onTogglePlay: () -> Unit,
@@ -910,20 +977,27 @@ private fun BottomBar(
     ) {
         Column {
             if (!isLive && duration > 0) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(XColors.Bar, RoundedCornerShape(2.dp)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth((position.toFloat() / duration.toFloat()).coerceIn(0f, 1f))
-                            .height(3.dp)
-                            .background(XColors.Accent, RoundedCornerShape(2.dp)),
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
+                Slider(
+                    value = (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f),
+                    onValueChange = { onSeekPreview((it * duration).toLong()) },
+                    onValueChangeFinished = onSeekFinished,
+                    enabled = seekEnabled,
+                    modifier = Modifier.fillMaxWidth().height(32.dp),
+                    thumb = {
+                        Box(Modifier.width(10.dp).height(32.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(10.dp).background(if (seekEnabled) XColors.Accent else XColors.Bar, CircleShape))
+                        }
+                    },
+                    track = {
+                        Box(Modifier.fillMaxWidth().height(3.dp).background(XColors.Bar, RoundedCornerShape(2.dp))) {
+                            Box(
+                                Modifier.fillMaxWidth((position.toFloat() / duration.toFloat()).coerceIn(0f, 1f))
+                                    .height(3.dp)
+                                    .background(XColors.Accent, RoundedCornerShape(2.dp)),
+                            )
+                        }
+                    },
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(format(position), style = MaterialTheme.typography.bodySmall)
                     Text("-${format(duration - position)}", style = MaterialTheme.typography.bodySmall)
