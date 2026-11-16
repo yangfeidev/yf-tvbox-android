@@ -13,6 +13,7 @@ import me.bsdnme.tvbox.data.model.Site
 import me.bsdnme.tvbox.data.model.Subscription
 import me.bsdnme.tvbox.data.model.SubscriptionDocument
 import me.bsdnme.tvbox.data.model.WarehouseEntry
+import me.bsdnme.tvbox.data.model.preferredSite
 import me.bsdnme.tvbox.data.net.SourceException
 import me.bsdnme.tvbox.data.net.SubscriptionApi
 import kotlinx.coroutines.Dispatchers
@@ -191,8 +192,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 store.saveSubscriptions(next)
                 store.writeSubscriptionCache(id, raw)
                 store.activeSubscriptionId = id
-                val site = document.usableSites.firstOrNull { it.key == _state.value.settings.currentSiteKey }
-                    ?: document.usableSites.firstOrNull()
+                val site = document.preferredSite(_state.value.settings.currentSiteKey)
                 store.currentSiteKey = site?.key.orEmpty()
                 _state.update {
                     it.copy(
@@ -275,7 +275,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             store.saveSubscriptions(next)
             _state.update { if (silent) it.copy(subscriptions = next) else it.copy(subscriptions = next, loading = false, refreshingSubscriptionId = null, error = null) }
-            if (_state.value.settings.activeSubscriptionId == active.id) applyDocument(document)
+            if (_state.value.settings.activeSubscriptionId == active.id) applyDocument(document, preferDefault = true)
         } catch (e: kotlinx.coroutines.CancellationException) {
             _state.update { if (it.refreshingSubscriptionId == active.id) it.copy(loading = false, refreshingSubscriptionId = null) else it }
             throw e
@@ -284,10 +284,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun applyDocument(document: SubscriptionDocument) {
+    private fun applyDocument(document: SubscriptionDocument, preferDefault: Boolean = false) {
         val usable = document.usableSites
         val savedKey = _state.value.settings.currentSiteKey
-        val site = usable.firstOrNull { it.key == savedKey } ?: usable.firstOrNull()
+        val site = if (preferDefault) document.preferredSite(savedKey)
+            else usable.firstOrNull { it.key == savedKey } ?: usable.firstOrNull()
         if (site != null) store.currentSiteKey = site.key
         _state.update {
             it.copy(

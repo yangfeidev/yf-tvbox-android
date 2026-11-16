@@ -65,8 +65,8 @@ fun FeigeMediaApp(formFactor: FormFactor) {
 
     val context = LocalContext.current
     val modePrefs = remember { context.getSharedPreferences("content_mode", android.content.Context.MODE_PRIVATE) }
-    var familyMode by remember { mutableStateOf(formFactor.isTv || modePrefs.getBoolean("family", false)) }
-    LaunchedEffect(formFactor) { if (formFactor.isTv) familyMode = true }
+    val contentAuthorization = remember { me.bsdnme.tvbox.data.ContentAuthorization(context.applicationContext) }
+    var familyMode by remember { mutableStateOf(!contentAuthorization.isAuthorized || modePrefs.getBoolean("family", true)) }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     val homeCache = remember(familyMode) { mutableMapOf<Site, HomeSnapshot>() }
     val categoryCache = remember(familyMode) { CategoryCache() }

@@ -2,6 +2,7 @@ package me.bsdnme.tvbox.cast
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -26,13 +27,26 @@ data class CastPosition(val position: Long, val duration: Long)
 object Dlna {
     private val client = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS)
         .readTimeout(4, TimeUnit.SECONDS).callTimeout(6, TimeUnit.SECONDS).build()
-    private fun xml(text: String) = DocumentBuilderFactory.newInstance().apply {
-        isNamespaceAware = true
-        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        setFeature("http://xml.org/sax/features/external-general-entities", false)
-        setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-    }.newDocumentBuilder().parse(InputSource(StringReader(text)))
+    private fun xml(text: String): org.w3c.dom.Document {
+        // Android's parser does not implement Xerces' security features. Reject DTDs
+        // before parsing so entity declarations cannot be used on any platform.
+        require(!text.contains("<!DOCTYPE", ignoreCase = true)) { "DTD is not allowed" }
+        return DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            listOf(
+                "http://apache.org/xml/features/disallow-doctype-decl" to true,
+                "http://xml.org/sax/features/external-general-entities" to false,
+                "http://xml.org/sax/features/external-parameter-entities" to false,
+            ).forEach { (feature, enabled) ->
+                try { setFeature(feature, enabled) } catch (_: javax.xml.parsers.ParserConfigurationException) { }
+            }
+        }.newDocumentBuilder().parse(InputSource(StringReader(text)))
+    }
     private fun Element.value(name: String): String = getElementsByTagNameNS("*", name).item(0)?.textContent?.trim().orEmpty()
+    private fun Element.child(name: String): Element? = (0 until childNodes.length)
+        .mapNotNull { childNodes.item(it) as? Element }
+        .firstOrNull { (it.localName ?: it.tagName) == name }
+    private fun Element.childValue(name: String) = child(name)?.textContent?.trim().orEmpty()
     private fun escape(value: String) = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;")
 
     suspend fun discover(context: Context): List<CastDevice> = withContext(Dispatchers.IO) {
@@ -42,8 +56,15 @@ object Dlna {
             val locations = linkedSetOf<String>()
             DatagramSocket().use { socket ->
                 socket.soTimeout = 500
-                val search = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n").toByteArray(Charsets.UTF_8)
-                repeat(2) { socket.send(DatagramPacket(search, search.size, InetAddress.getByName("239.255.255.250"), 1900)) }
+                val multicast = InetAddress.getByName("239.255.255.250")
+                // Some renderers only answer service searches or ssdp:all.
+                val targets = listOf("urn:schemas-upnp-org:device:MediaRenderer:1", "urn:schemas-upnp-org:service:AVTransport:1", "ssdp:all")
+                repeat(2) {
+                    for (target in targets) {
+                        val search = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: $target\r\n\r\n").toByteArray(Charsets.UTF_8)
+                        socket.send(DatagramPacket(search, search.size, multicast, 1900))
+                    }
+                }
                 val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
                 while (System.nanoTime() < deadline) {
                     val packet = DatagramPacket(ByteArray(8192), 8192)
@@ -57,7 +78,12 @@ object Dlna {
                     } catch (_: SocketTimeoutException) { }
                 }
             }
-            locations.mapNotNull { location -> runCatching { readDevice(location) }.getOrNull() }.distinctBy { it.controlUrl }
+            locations.mapNotNull { location ->
+                try { readDevice(location) } catch (e: Exception) {
+                    Log.w("Dlna", "Unable to read renderer description", e)
+                    null
+                }
+            }.distinctBy { it.controlUrl }
         } finally { if (lock.isHeld) lock.release() }
     }
 
@@ -66,12 +92,16 @@ object Dlna {
             if (!it.isSuccessful) return null
             it.body?.string() ?: return null
         }
+        return parseDeviceDescription(location, body)
+    }
+
+    internal fun parseDeviceDescription(location: String, body: String): CastDevice? {
         val doc = xml(body)
         val devices = doc.getElementsByTagNameNS("*", "device")
         for (i in 0 until devices.length) {
             val device = devices.item(i) as? Element ?: continue
-            if (!device.value("deviceType").contains(":MediaRenderer:")) continue
-            val services = device.getElementsByTagNameNS("*", "service")
+            if (!device.childValue("deviceType").contains(":MediaRenderer:", ignoreCase = true)) continue
+            val services = device.child("serviceList")?.getElementsByTagNameNS("*", "service") ?: continue
             for (j in 0 until services.length) {
                 val service = services.item(j) as? Element ?: continue
                 val type = service.value("serviceType")
@@ -80,7 +110,7 @@ object Dlna {
                     val base = doc.documentElement.value("URLBase").ifBlank { location }
                     val url = URI(base).resolve(control).toString()
                     if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) continue
-                    return CastDevice(device.value("friendlyName").ifBlank { "电视设备" }, url, type)
+                    return CastDevice(device.childValue("friendlyName").ifBlank { "电视设备" }, url, type)
                 }
             }
         }
@@ -94,7 +124,14 @@ object Dlna {
             .post(body.toRequestBody("text/xml; charset=utf-8".toMediaType())).build()
         client.newCall(request).execute().use { response ->
             val result = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw IllegalStateException("电视返回错误 (${response.code})")
+            if (!response.isSuccessful) {
+                val detail = runCatching {
+                    val fault = xml(result).documentElement
+                    listOf(fault.value("errorCode"), fault.value("errorDescription"))
+                        .filter { it.isNotBlank() }.joinToString(" ")
+                }.getOrDefault("")
+                throw IllegalStateException("电视返回错误 (${response.code})" + if (detail.isNotBlank()) "：$detail" else "")
+            }
             result
         }
     }

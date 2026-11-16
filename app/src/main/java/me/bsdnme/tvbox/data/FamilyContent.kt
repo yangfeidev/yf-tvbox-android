@@ -30,12 +30,13 @@ object FamilyContent {
         return all.filterNot { it.typeId in blocked }
     }
     fun visible(item: MediaItem, categories: List<Category>): Boolean =
-        !restrictedName(item.categoryName) && item.typeId !in restrictedIds(categories)
+        !restrictedName(item.name) && !restrictedName(item.remarks) &&
+            !restrictedName(item.categoryName) && item.typeId !in restrictedIds(categories)
     private fun filter(site: Site, page: PagedMedia, family: Boolean): PagedMedia {
         if (!family) return page
         val categories = runCatching { rawCategories(site) }.getOrDefault(page.categories)
         val blocked = restrictedIds(categories)
-        return page.copy(items = page.items.filter { !restrictedName(it.categoryName) && it.typeId !in blocked },
+        return page.copy(items = page.items.filter { !restrictedName(it.name) && !restrictedName(it.remarks) && !restrictedName(it.categoryName) && it.typeId !in blocked },
             categories = page.categories.filterNot { it.typeId in blocked || restrictedName(it.name) })
     }
     fun list(site: Site, typeId: String = "", page: Int = 1, family: Boolean): PagedMedia {

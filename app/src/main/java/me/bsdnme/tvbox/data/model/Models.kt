@@ -70,6 +70,17 @@ class SubscriptionDocument(
     val isWarehouse: Boolean get() = warehouse.isNotEmpty()
 }
 
+/** 更新订阅时优先选择指定源和带菊花的源，再回退到当前源或第一个可用源。 */
+fun SubscriptionDocument.preferredSite(savedKey: String): Site? =
+    usableSites.let { sites ->
+        fun normalizedName(site: Site) = site.name.filter { it.isLetterOrDigit() && it != '丨' }
+        sites.firstOrNull { normalizedName(it) == "影视工厂" }
+            ?: sites.firstOrNull { normalizedName(it) == "电影天堂" }
+            ?: sites.firstOrNull { "🌼" in it.name }
+            ?: sites.firstOrNull { it.key == savedKey }
+            ?: sites.firstOrNull()
+    }
+
 data class Category(val typeId: String, val name: String, val parentId: String = "")
 
 data class MediaItem(

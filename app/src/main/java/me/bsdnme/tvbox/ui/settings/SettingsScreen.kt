@@ -98,9 +98,11 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
 
-    var pinDialog by remember { mutableStateOf<String?>(null) }
-    pinDialog?.let { action ->
-        PinDialog(changePin = action == "change", onDismiss = { pinDialog = null }, onUnlocked = { pinDialog = null; onFamilyModeChange(false) })
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val contentAuthorization = remember { me.bsdnme.tvbox.data.ContentAuthorization(context.applicationContext) }
+    var showAuthorizationDialog by remember { mutableStateOf(false) }
+    if (showAuthorizationDialog) {
+        ContentAuthorizationDialog(onDismiss = { showAuthorizationDialog = false }, onAuthorized = { showAuthorizationDialog = false; onFamilyModeChange(false) })
     }
 
     var url by remember { mutableStateOf(DefaultSources.BOX) }
@@ -477,16 +479,15 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
 
         item {
             SwitchRow(
-                label = "家庭模式",
-                description = if (familyMode) "适合全家一起观看；切换个人模式需要 PIN" else "个人模式：显示全部内容；重新打开应用后电视恢复家庭模式",
-                checked = familyMode,
-                onCheckedChange = { if (it) onFamilyModeChange(true) else pinDialog = "unlock" },
+                label = "显示受限内容",
+                description = if (familyMode) "默认隐藏；首次开启需要授权码" else "已开启；可以随时关闭",
+                checked = !familyMode,
+                onCheckedChange = { enabled ->
+                    if (!enabled) onFamilyModeChange(true)
+                    else if (contentAuthorization.isAuthorized) onFamilyModeChange(false)
+                    else showAuthorizationDialog = true
+                },
             )
-        }
-        item {
-            FocusableSurface(onClick = { pinDialog = "change" }, shape = RoundedCornerShape(XRadii.pill), focusScale = 1.04f) {
-                Text("设置或修改 PIN", modifier = Modifier.background(XColors.SurfaceRaised, RoundedCornerShape(XRadii.pill)).padding(horizontal = 18.dp, vertical = 10.dp))
-            }
         }
         item {
             SwitchRow(
