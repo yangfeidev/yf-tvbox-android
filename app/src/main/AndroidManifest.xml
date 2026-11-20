@@ -31,6 +31,8 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.FeigeMedia">
 
+        <service android:name=".data.net.SpiderService" android:exported="false" android:process=":spider" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

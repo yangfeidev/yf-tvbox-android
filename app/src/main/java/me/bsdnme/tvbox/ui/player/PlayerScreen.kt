@@ -410,7 +410,7 @@ fun PlayerScreen(
         }
         playError = null
         try {
-            val playback = if (request.site?.type == 4 && !request.isLive) {
+            val playback = if (request.site != null && request.site.type in listOf(3, 4) && !request.isLive) {
                 withContext(Dispatchers.IO) { VodApi.resolvePlayback(request.site, sources.getOrNull(sourceIndex)?.name.orEmpty(), rawUrl) }
             } else VodApi.Playback(rawUrl, request.channel?.headers.orEmpty())
             resolved = playback

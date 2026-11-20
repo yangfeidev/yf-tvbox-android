@@ -16,6 +16,10 @@ import me.bsdnme.tvbox.ui.component.TvTextButton as TextButton
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +66,16 @@ import me.bsdnme.tvbox.vm.AppViewModel
 fun FeigeMediaApp(formFactor: FormFactor) {
     val vm: AppViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) vm.setAppForeground(true)
+            if (event == Lifecycle.Event.ON_STOP) vm.setAppForeground(false)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        vm.setAppForeground(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); vm.setAppForeground(false) }
+    }
 
     val context = LocalContext.current
     val modePrefs = remember { context.getSharedPreferences("content_mode", android.content.Context.MODE_PRIVATE) }

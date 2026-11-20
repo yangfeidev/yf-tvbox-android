@@ -63,6 +63,31 @@ class LocalStore(context: Context) {
         }
     }
 
+    fun readSourceKeys(id: String): MutableMap<String, String> = runCatching {
+        val raw = File(cacheDir, "$id.source-keys.json").readText()
+        val obj = JSONObject(raw)
+        obj.keys().asSequence().associateWith { obj.getString(it) }.toMutableMap()
+    }.getOrElse { mutableMapOf() }
+
+    fun writeSourceKeys(id: String, keys: Map<String, String>) {
+        if (!cacheDir.exists()) cacheDir.mkdirs()
+        File(cacheDir, "$id.source-keys.json").writeText(JSONObject(keys).toString())
+    }
+
+    @Synchronized fun readSourceChecks(id: String): List<SourceCheckSnapshot> =
+        SourceCheckCache.decode(prefs.getString("source_checks_$id", "[]").orEmpty())
+
+    @Synchronized fun writeSourceChecks(id: String, snapshot: SourceCheckSnapshot) {
+        val existing = readSourceChecks(id)
+        val old = existing.firstOrNull { it.network == snapshot.network }
+        val combined = snapshot.copy(
+            checkedAt = if (snapshot.checkedAt > 0) snapshot.checkedAt else old?.checkedAt ?: 0,
+            entries = old?.entries.orEmpty() + snapshot.entries,
+        )
+        val snapshots = (listOf(combined) + existing.filterNot { it.network == snapshot.network }).take(8)
+        prefs.edit().putString("source_checks_$id", SourceCheckCache.encode(snapshots)).apply()
+    }
+
     // ------------------------------------------------------------------ 直播列表缓存
 
     /**

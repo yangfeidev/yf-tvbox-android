@@ -14,7 +14,7 @@ package me.bsdnme.tvbox.data.model
  * 源站类型说明（决定能不能用）：
  * - 0 = 苹果CMS XML 接口，可直接请求
  * - 1 = 苹果CMS JSON 接口，可直接请求
- * - 3 = Spider，api 字段是 jar 里的类名，需要 JVM 执行，本项目暂不支持
+ * - 3 = Spider，支持部分 Android DEX JAR；脚本需要其他运行时
  * - 4 = 远程 Spider HTTP 接口
  */
 
@@ -35,22 +35,26 @@ data class Site(
     val searchable: Boolean,
     val quickSearch: Boolean,
     val ext: String = "",
+    /** type 3 的实际 JAR 描述及其配置来源；不代表此代码已获运行授权。 */
+    val jar: String = "",
+    val configUrl: String = "",
 ) {
     /** type 1 走 JSON，type 0 走 XML */
     val isJsonApi: Boolean get() = type == 1 || type == 4
 
-    /** 只有 0 / 1 且 api 是网址时才可用 */
+    /** 支持 CMS、HTTP Spider 与经典 Android JAR Spider。 */
     val usable: Boolean
-        get() = api.startsWith("http") && (type == 0 || type == 1 || type == 4)
+        get() = (api.startsWith("http") && (type == 0 || type == 1 || type == 4)) ||
+            (type == 3 && api.matches(Regex("csp_[A-Za-z0-9_]+")) && jar.startsWith("http"))
 
-    /** type 3 / 4 是 jar 爬虫，需要 JVM，当前无法执行 */
+    /** type 3 可能是 JAR、脚本或其他运行时。 */
     val isSpider: Boolean get() = type == 3
 
     /** 不可用原因，用于设置页向用户解释 */
     val unavailableReason: String?
         get() = when {
             usable -> null
-            isSpider -> "需要 spider 运行时，当前版本不支持"
+            isSpider -> "不支持此 Spider 类型或缺少 JAR 地址"
             api.isBlank() -> "缺少接口地址"
             else -> "未知源类型 type=$type"
         }
@@ -70,16 +74,9 @@ class SubscriptionDocument(
     val isWarehouse: Boolean get() = warehouse.isNotEmpty()
 }
 
-/** 更新订阅时优先选择指定源和带菊花的源，再回退到当前源或第一个可用源。 */
+/** 保留用户选择的源；当前源消失时选择第一个可用源。 */
 fun SubscriptionDocument.preferredSite(savedKey: String): Site? =
-    usableSites.let { sites ->
-        fun normalizedName(site: Site) = site.name.filter { it.isLetterOrDigit() && it != '丨' }
-        sites.firstOrNull { normalizedName(it) == "影视工厂" }
-            ?: sites.firstOrNull { normalizedName(it) == "电影天堂" }
-            ?: sites.firstOrNull { "🌼" in it.name }
-            ?: sites.firstOrNull { it.key == savedKey }
-            ?: sites.firstOrNull()
-    }
+    usableSites.firstOrNull { it.key == savedKey } ?: usableSites.firstOrNull { it.type != 3 }
 
 data class Category(val typeId: String, val name: String, val parentId: String = "")
 

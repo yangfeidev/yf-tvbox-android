@@ -35,7 +35,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const limiter = url.pathname === '/v1/installations' ? env.REPORT_LIMIT : env.ADMIN_LIMIT;
+    const limiter = ['/v1/installations', '/v1/website-visits'].includes(url.pathname) ? env.REPORT_LIMIT : env.ADMIN_LIMIT;
     if (!(await limiter.limit({ key: ip })).success) return reply('Too many requests', 429);
     if (url.pathname === '/login' && request.method === 'POST') {
       if (request.headers.get('Origin') !== url.origin) return reply('Forbidden', 403);
@@ -62,6 +62,35 @@ export default {
     if (url.pathname === '/logout' && request.method === 'POST') {
       if (request.headers.get('Origin') !== url.origin) return reply('Forbidden', 403);
       return reply(null, 303, { 'Location': '/', 'Set-Cookie': `${cookieName}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0` });
+    }
+    if (url.pathname === '/v1/website-visits' && request.method === 'POST') {
+      const origin = request.headers.get('Origin');
+      if (origin !== 'https://feige-yingshicang-app.mistybookmark3.chatgpt.site') return reply('Forbidden', 403);
+      if (!request.body) return reply('Bad request', 400);
+      const reader = request.body.getReader();
+      let size = 0, chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 1024) { await reader.cancel(); return reply('Too large', 413); }
+        chunks.push(value);
+      }
+      let data;
+      try { const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } data = JSON.parse(new TextDecoder().decode(bytes)); } catch { return reply('Bad request', 400); }
+      if (!data || typeof data.referrer !== 'string' || data.referrer.length > 255) return reply('Bad request', 400);
+      let referrer = '';
+      if (data.referrer) {
+        try { const parsed = new URL(data.referrer); if (!['http:', 'https:'].includes(parsed.protocol)) return reply('Bad request', 400); referrer = parsed.hostname.slice(0, 253); } catch { return reply('Bad request', 400); }
+      }
+      const ua = request.headers.get('User-Agent') || '';
+      const device = /bot|spider|crawler|slurp|bingpreview/i.test(ua) ? '爬虫' : /ipad|tablet|android(?!.*mobile)/i.test(ua) ? '平板' : /mobile|iphone|ipod/i.test(ua) ? '手机' : '电脑';
+      const browser = /Edg\//i.test(ua) ? 'Edge' : /OPR\//i.test(ua) ? 'Opera' : /Firefox\//i.test(ua) ? 'Firefox' : /(?:Chrome|CriOS)\//i.test(ua) ? 'Chrome' : /Safari\//i.test(ua) ? 'Safari' : '其他';
+      const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : /Mac OS/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '其他';
+      const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 100) : '';
+      await env.DB.prepare('INSERT INTO website_visits (country, region, city, device, browser, os, language, referrer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(clean(request.cf?.country), clean(request.cf?.region), clean(request.cf?.city), device, browser, os, clean((request.headers.get('Accept-Language') || '').split(',')[0]), referrer).run();
+      return reply(null, 204);
     }
     if (url.pathname === '/v1/installations' && request.method === 'POST') {
       if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return reply('Unsupported content type', 415);

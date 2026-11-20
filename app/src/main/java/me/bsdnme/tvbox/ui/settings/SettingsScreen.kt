@@ -42,6 +42,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -66,6 +67,10 @@ import me.bsdnme.tvbox.core.theme.XRadii
 import me.bsdnme.tvbox.data.model.LiveSourceEntry
 import me.bsdnme.tvbox.data.model.Subscription
 import me.bsdnme.tvbox.data.model.WarehouseEntry
+import me.bsdnme.tvbox.data.model.Site
+import me.bsdnme.tvbox.data.net.SpiderRuntime
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import me.bsdnme.tvbox.ui.component.BrandMark
 import me.bsdnme.tvbox.ui.component.CreatorSignature
 import me.bsdnme.tvbox.ui.component.FocusableSurface
@@ -85,7 +90,7 @@ import kotlinx.coroutines.launch
  * 结构：
  * - 添加订阅：地址 + 备注 + 按钮；多仓会弹窗选子仓库
  * - 已添加订阅：名称、地址、源数量、更新时间，可更新 / 删除
- * - 源站列表：可用的可点切换；spider 源标灰并注明原因
+ * - 源站列表：可切换源；第三方 JAR 需要授权并经设备检测
  * - 直播源：自定义 m3u / txt 地址；留空则用订阅自带的 lives
  * - 偏好：强制电视模式、启动自动更新
  *
@@ -94,6 +99,10 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: Boolean, onFloatingPlayerChange: (Boolean) -> Unit, familyMode: Boolean, onFamilyModeChange: (Boolean) -> Unit, onSiteChanged: () -> Unit) {
+    DisposableEffect(vm) {
+        vm.setSourceSettingsVisible(true)
+        onDispose { vm.setSourceSettingsVisible(false) }
+    }
     val padding = LocalFormFactor.current.horizontalPadding
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
@@ -114,6 +123,29 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
     var warehouse by remember { mutableStateOf<List<WarehouseEntry>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var siteQuery by remember { mutableStateOf("") }
+    var pendingSpider by remember { mutableStateOf<Pair<Site, SpiderRuntime.Prepared>?>(null) }
+    var preparingSpider by remember { mutableStateOf(false) }
+    var spiderError by remember { mutableStateOf<String?>(null) }
+    spiderError?.let { error ->
+        AlertDialog(onDismissRequest = { spiderError = null }, title = { Text("源站不可用") },
+            text = { Text(error) }, confirmButton = { TextButton(onClick = { spiderError = null }) { Text("知道了") } })
+    }
+    suspend fun activateSpider(site: Site) {
+        preparingSpider = true
+        try {
+            val failure = vm.selectSpider(site)
+            if (failure == null) onSiteChanged() else spiderError = failure
+        } finally { preparingSpider = false }
+    }
+    pendingSpider?.let { (site, jar) ->
+        AlertDialog(
+            onDismissRequest = { pendingSpider = null },
+            title = { Text("运行第三方 JAR") },
+            text = { Text("源：${site.name}\n配置：${site.configUrl}\nJAR：${jar.source}\nSHA-256：${jar.sha256}\n\n该代码将使用本应用的权限运行，可能访问应用数据和网络。仅在信任此文件时授权。文件更新后需要重新授权。") },
+            confirmButton = { TextButton(onClick = { SpiderRuntime.approve(jar); pendingSpider = null; scope.launch { activateSpider(site) } }) { Text("信任并运行") } },
+            dismissButton = { TextButton(onClick = { pendingSpider = null }) { Text("取消") } },
+        )
+    }
 
     fun submit(targetUrl: String, targetName: String) {
         if (targetUrl.isBlank()) return
@@ -235,14 +267,9 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     PillChip(
-                        label = "单仓 /box",
+                        label = "默认影视源",
                         selected = url == DefaultSources.BOX,
                         onClick = { url = DefaultSources.BOX },
-                    )
-                    PillChip(
-                        label = "多仓 /dc",
-                        selected = url == DefaultSources.WAREHOUSE,
-                        onClick = { url = DefaultSources.WAREHOUSE },
                     )
                     PillChip(
                         label = "直播 /live",
@@ -306,7 +333,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
             if (!state.subscriptions.any { it.url == DefaultSources.BOX }) {
                 Spacer(Modifier.height(10.dp))
                 FocusableSurface(
-                    onClick = { submit(DefaultSources.BOX, "默认单仓") },
+                    onClick = { submit(DefaultSources.BOX, "默认影视源") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(XRadii.md),
                     focusScale = 1.02f,
@@ -336,7 +363,7 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "内置单仓（tv.bsdnme.me/box）不在上面的列表里，点按钮一键恢复",
+                    "默认影视源不在上面的列表里，点按钮一键恢复",
                     style = MaterialTheme.typography.bodySmall,
                     color = XColors.TextTertiary,
                 )
@@ -389,7 +416,23 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
         }
 
         val prefix = "${state.settings.activeSubscriptionId}::"
-        val visibleSites = state.usableSites.filter { it.name.contains(siteQuery.trim(), ignoreCase = true) }
+        if (preparingSpider) item { InlineNotice("正在加载并检测第三方源…") }
+        if (state.localSourceChecks) {
+            item {
+                Column {
+                    if (state.checkingSources) Text("正在检测源站 ${state.sourceCheckCompleted}/${state.sourceCheckTotal}，当前列表保持不变", style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary)
+                    if (state.sourceCheckStale) Text("显示上次检测结果，当前网络状态有待确认", style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary)
+                    state.sourceCheckMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary) }
+                    if (!state.sourceCheckHasSnapshot && !state.showAllSources && !state.sourceCheckUpdateReady) Text("暂未完成源站检测，可先查看全部源", style = MaterialTheme.typography.bodySmall, color = XColors.TextSecondary)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = vm::applySourceCheckUpdate) { Text(if (state.sourceCheckUpdateReady) "查看检测结果" else "暂无新结果") }
+                        TextButton(onClick = { vm.showAllSources(!state.showAllSources) }) { Text(if (state.showAllSources) "只看可用源" else "查看全部源") }
+                        TextButton(onClick = { if (!state.checkingSources) vm.refreshSourceChecks() }) { Text(if (state.checkingSources) "检测中…" else "重新检测") }
+                    }
+                }
+            }
+        }
+        val visibleSites = state.selectableSites.filter { it.name.contains(siteQuery.trim(), ignoreCase = true) }
             .sortedBy { if (prefix + it.key in state.pinnedSites) 0 else 1 }
         // 拆成多个懒加载项，订阅变化时更新列表，也避免大量源站一次性测量。
         val siteGroups = visibleSites.chunked(12)
@@ -402,10 +445,24 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
                     val pinned = prefix + site.key in state.pinnedSites
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
                         PillChip(
-                            label = site.name,
+                            label = when {
+                                site.key in state.checkedSourceKeys && site.key !in state.availableSourceKeys -> "${site.name}（检测失败）"
+                                state.localSourceChecks && site.key !in state.checkedSourceKeys -> "${site.name}（待检测）"
+                                else -> site.name
+                            },
                             selected = state.currentSite?.key == site.key,
                             onClick = {
-                                if (state.currentSite?.key != site.key) {
+                                if (site.type == 3 && !preparingSpider) {
+                                    scope.launch {
+                                        preparingSpider = true
+                                        try {
+                                            val jar = withContext(Dispatchers.IO) { SpiderRuntime.prepare(site, refresh = true) }
+                                            if (SpiderRuntime.approved(jar)) activateSpider(site)
+                                            else pendingSpider = site to jar
+                                        } catch (error: Exception) { spiderError = error.message ?: "JAR 加载失败" }
+                                        finally { preparingSpider = false }
+                                    }
+                                } else if (site.type != 3 && state.currentSite?.key != site.key) {
                                     vm.selectSite(site)
                                     onSiteChanged()
                                 }
@@ -422,9 +479,20 @@ fun SettingsScreen(state: AppUiState, vm: AppViewModel, floatingPlayerEnabled: B
             item { Text("没有找到匹配的源站", style = MaterialTheme.typography.bodySmall) }
         }
 
-        if (state.usableSites.isEmpty()) {
+        if (state.document?.sites?.any { it.type == 3 && it.usable } == true) {
             item {
-                InlineNotice("当前订阅没有支持的源站（type 0 / 1 / 4）")
+                TextButton(onClick = { SpiderRuntime.revokeAll(); spiderError = "已撤销全部 JAR 授权，再次使用时需要重新确认。" }) { Text("撤销 JAR 授权") }
+            }
+        }
+
+        if (state.selectableSites.isEmpty()) {
+            item {
+                val message = when {
+                    state.checkingSources -> "正在检测当前网络下可用的影视源，可选择查看全部源"
+                    state.localSourceChecks -> "当前网络下没有检测到可用的影视源，将自动重试"
+                    else -> "当前订阅没有支持的源站"
+                }
+                InlineNotice(message)
             }
         }
 

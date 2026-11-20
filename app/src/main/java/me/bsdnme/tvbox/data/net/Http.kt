@@ -65,7 +65,9 @@ object Http {
             throw e
         } catch (e: IOException) {
             val reason = when {
-                e.message?.contains("timeout", ignoreCase = true) == true ->
+                e is java.net.SocketTimeoutException ||
+                    e.message?.contains("timeout", ignoreCase = true) == true ||
+                    e.message?.contains("timed out", ignoreCase = true) == true ->
                     "连接或读取超时，请检查网络后重试"
                 else -> e.message ?: e.javaClass.simpleName
             }

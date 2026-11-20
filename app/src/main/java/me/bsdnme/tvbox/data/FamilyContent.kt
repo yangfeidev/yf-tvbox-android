@@ -43,7 +43,7 @@ object FamilyContent {
         val result = filter(site, VodApi.list(site, typeId, page), family)
         // Some remote spiders return no homepage and VodApi falls back to their first category.
         // If that category was hidden, try a visible one instead.
-        if (family && site.type == 4 && typeId.isBlank() && result.items.isEmpty()) {
+        if (family && site.type in listOf(3, 4) && typeId.isBlank() && result.items.isEmpty()) {
             for (category in result.categories.take(4)) {
                 val candidate = filter(site, VodApi.list(site, category.typeId, 1), true)
                 if (candidate.items.isNotEmpty()) return candidate.copy(categories = result.categories)

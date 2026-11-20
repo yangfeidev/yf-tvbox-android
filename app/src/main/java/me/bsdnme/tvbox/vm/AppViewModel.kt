@@ -1,10 +1,18 @@
 package me.bsdnme.tvbox.vm
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import me.bsdnme.tvbox.core.DefaultSources
 import me.bsdnme.tvbox.data.LocalStore
+import me.bsdnme.tvbox.data.SourceCheckCache
+import me.bsdnme.tvbox.data.SourceCheckSnapshot
+import me.bsdnme.tvbox.data.SourceCheckEntry
+import me.bsdnme.tvbox.data.SourceNetwork
+import me.bsdnme.tvbox.data.sourceNetwork
 import me.bsdnme.tvbox.data.model.AppSettings
 import me.bsdnme.tvbox.data.model.ChannelGroup
 import me.bsdnme.tvbox.data.model.LibraryEntry
@@ -16,11 +24,19 @@ import me.bsdnme.tvbox.data.model.WarehouseEntry
 import me.bsdnme.tvbox.data.model.preferredSite
 import me.bsdnme.tvbox.data.net.SourceException
 import me.bsdnme.tvbox.data.net.SubscriptionApi
+import me.bsdnme.tvbox.data.net.VodApi
+import me.bsdnme.tvbox.data.net.SpiderRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,11 +63,24 @@ data class AppUiState(
     val refreshingSubscriptionId: String? = null,
     val addingSubscriptionUrl: String? = null,
     val pinnedSites: Set<String> = emptySet(),
+    val localSourceChecks: Boolean = false,
+    val checkingSources: Boolean = false,
+    val checkedSourceKeys: Set<String> = emptySet(),
+    val availableSourceKeys: Set<String> = emptySet(),
+    val sourceCheckHasSnapshot: Boolean = false,
+    val sourceCheckStale: Boolean = false,
+    val sourceCheckCompleted: Int = 0,
+    val sourceCheckTotal: Int = 0,
+    val sourceCheckUpdateReady: Boolean = false,
+    val sourceCheckMessage: String? = null,
+    val showAllSources: Boolean = false,
     val error: String? = null,
     val favorites: List<LibraryEntry> = emptyList(),
     val history: List<LibraryEntry> = emptyList(),
 ) {
     val usableSites: List<Site> get() = document?.usableSites.orEmpty()
+    val selectableSites: List<Site>
+        get() = if (localSourceChecks && !showAllSources) usableSites.filter { it.type == 3 || it.key in availableSourceKeys || it.key == currentSite?.key } else usableSites
     val hasSubscription: Boolean get() = subscriptions.isNotEmpty()
 
     /** 因缺少 JVM 而不可用的源数量，设置页要显示出来 */
@@ -75,6 +104,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<AppUiState> = _state.asStateFlow()
     private val pendingAdds = mutableMapOf<String, Deferred<AddResult>>()
     private val libraryWrites = Channel<() -> Unit>(Channel.UNLIMITED)
+    private var sourceCheckJob: Job? = null
+    private var sourceCheckPrepareJob: Job? = null
+    private var networkChangeJob: Job? = null
+    private var runningCheckId: String? = null
+    private var displayedSnapshot: SourceCheckSnapshot? = null
+    private var pendingSnapshot: SourceCheckSnapshot? = null
+    private var snapshotSubscriptionId = ""
+    private var settingsVisible = false
+    private var appForeground = true
+    private val connectivity = application.getSystemService(ConnectivityManager::class.java)
+    private var currentNetwork = sourceNetwork(application)
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = scheduleNetworkUpdate()
+        override fun onLost(network: Network) = scheduleNetworkUpdate()
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = scheduleNetworkUpdate()
+    }
 
     private companion object {
         /** 直播列表本地缓存有效期：2 小时 */
@@ -82,6 +127,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        SpiderRuntime.initialize(application)
+        runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
         // 单写者消费者直接挂在 viewModelScope 上（onCleared 自动取消，无需自管 scope），
         // 每条写入统一切到 IO 执行，保证收藏 / 历史的落盘按提交顺序串行完成
         viewModelScope.launch {
@@ -91,6 +138,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
+        networkChangeJob?.cancel()
+        sourceCheckJob?.cancel()
         libraryWrites.close()
         super.onCleared()
     }
@@ -134,14 +184,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(settings = it.settings.copy(activeSubscriptionId = active.id)) }
             }
             viewModelScope.launch(Dispatchers.IO) {
-                val cached = store.readSubscriptionCache(active.id)?.let { runCatching { SubscriptionApi.parse(it) }.getOrNull() }
+                val cached = store.readSubscriptionCache(active.id)?.let { runCatching { SubscriptionApi.parse(it, active.url) }.getOrNull() }
                 if (_state.value.settings.activeSubscriptionId == active.id && cached != null) applyDocument(cached)
                 _state.update { it.copy(initializing = false) }
-                if (settings.autoUpdateOnLaunch && _state.value.settings.activeSubscriptionId == active.id) refreshActive(silent = true)
+                if ((settings.autoUpdateOnLaunch || active.url == DefaultSources.LEGACY_BOX) && _state.value.settings.activeSubscriptionId == active.id) refreshActive(silent = true)
             }
         } else if (settings.autoAddDefault) {
-            // 没有任何订阅时静默导入内置单仓；失败不打扰用户，设置页会显示错误
-            viewModelScope.launch { addSubscription(DefaultSources.BOX, "默认单仓"); _state.update { it.copy(initializing = false) } }
+            // 没有任何订阅时静默导入默认影视源；失败不打扰用户，设置页会显示错误
+            viewModelScope.launch { addSubscription(DefaultSources.BOX, "默认影视源"); _state.update { it.copy(initializing = false) } }
         } else {
             _state.update { it.copy(initializing = false) }
         }
@@ -174,7 +224,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(loading = true, addingSubscriptionUrl = url, error = null) }
             try {
                 val raw = SubscriptionApi.fetchRaw(url)
-                val document = SubscriptionApi.parse(raw)
+                val document = SubscriptionApi.parse(raw, url)
                 if (document.isWarehouse) {
                     _state.update { it.copy(loading = false) }
                     return@withContext AddResult.NeedWarehouse(document.warehouse)
@@ -203,6 +253,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         loading = false,
                     )
                 }
+                startLocalSourceChecks(document, id, url)
                 AddResult.Success
             } catch (e: CancellationException) {
                 _state.update { it.copy(loading = false) }
@@ -236,7 +287,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 } else {
-                    val cached = store.readSubscriptionCache(nextId)?.let { runCatching { SubscriptionApi.parse(it) }.getOrNull() }
+                    val cached = store.readSubscriptionCache(nextId)?.let { raw -> runCatching { SubscriptionApi.parse(raw, next.firstOrNull()?.url.orEmpty()) }.getOrNull() }
                     if (cached != null && _state.value.settings.activeSubscriptionId == nextId) applyDocument(cached)
                     refreshSubscription(nextId)
                 }
@@ -251,9 +302,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         store.activeSubscriptionId = id
         _state.update { it.copy(document = null, currentSite = null, settings = it.settings.copy(activeSubscriptionId = id)) }
         viewModelScope.launch(Dispatchers.IO) {
-            val cached = store.readSubscriptionCache(id)?.let { runCatching { SubscriptionApi.parse(it) }.getOrNull() }
+            val cached = store.readSubscriptionCache(id)?.let { raw -> runCatching { SubscriptionApi.parse(raw, _state.value.subscriptions.firstOrNull { it.id == id }?.url.orEmpty()) }.getOrNull() }
             if (_state.value.settings.activeSubscriptionId != id) return@launch
-            if (cached != null) applyDocument(cached) else refreshSubscription(id)
+            if (cached != null) applyDocument(cached)
+            val isLegacyDefault = _state.value.subscriptions.firstOrNull { it.id == id }?.url == DefaultSources.LEGACY_BOX
+            if (cached == null || isLegacyDefault) refreshSubscription(id)
         }
     }
 
@@ -264,13 +317,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         if (!silent) _state.update { it.copy(loading = true, refreshingSubscriptionId = active.id, error = null) }
         try {
-            val raw = SubscriptionApi.fetchRaw(active.url)
-            val document = SubscriptionApi.parse(raw)
+            val targetUrl = if (active.url == DefaultSources.LEGACY_BOX) DefaultSources.BOX else active.url
+            var raw = SubscriptionApi.fetchRaw(targetUrl)
+            var document = SubscriptionApi.parse(raw, targetUrl)
             if (document.isWarehouse) throw SourceException("该地址已变成多仓订阅，请重新添加子仓库")
+            if (targetUrl == DefaultSources.BOX) {
+                val previous = store.readSubscriptionCache(active.id)
+                    ?.let { runCatching { SubscriptionApi.parse(it, active.url) }.getOrNull() }
+                val sourceKeys = store.readSourceKeys(active.id)
+                raw = SubscriptionApi.preserveSourceKeys(raw, previous, sourceKeys)
+                document = SubscriptionApi.parse(raw, targetUrl)
+                store.writeSourceKeys(active.id, sourceKeys)
+            }
             store.writeSubscriptionCache(active.id, raw)
             val next = _state.value.subscriptions.map {
                 if (it.id == active.id) {
-                    it.copy(updatedAt = System.currentTimeMillis(), siteCount = document.sites.size)
+                    it.copy(
+                        url = targetUrl,
+                        name = if (it.url == DefaultSources.LEGACY_BOX && it.name == "默认单仓") "默认影视源" else it.name,
+                        updatedAt = System.currentTimeMillis(),
+                        siteCount = document.sites.size,
+                    )
                 } else it
             }
             store.saveSubscriptions(next)
@@ -288,7 +355,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val usable = document.usableSites
         val savedKey = _state.value.settings.currentSiteKey
         val site = if (preferDefault) document.preferredSite(savedKey)
-            else usable.firstOrNull { it.key == savedKey } ?: usable.firstOrNull()
+            else usable.firstOrNull { it.key == savedKey } ?: usable.firstOrNull { it.type != 3 }
         if (site != null) store.currentSiteKey = site.key
         _state.update {
             it.copy(
@@ -297,11 +364,175 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 settings = it.settings.copy(currentSiteKey = site?.key.orEmpty()),
             )
         }
+        val active = _state.value.subscriptions.firstOrNull { it.id == _state.value.settings.activeSubscriptionId }
+        startLocalSourceChecks(document, active?.id.orEmpty(), active?.url.orEmpty())
+    }
+
+    private fun startLocalSourceChecks(document: SubscriptionDocument, subscriptionId: String, url: String, force: Boolean = false) {
+        sourceCheckPrepareJob?.cancel()
+        sourceCheckPrepareJob = viewModelScope.launch {
+            val managed = url.isNotBlank() && document.sites.isNotEmpty()
+            if (!managed) {
+                sourceCheckJob?.cancel(); sourceCheckJob = null; runningCheckId = null
+                displayedSnapshot = null; pendingSnapshot = null; snapshotSubscriptionId = subscriptionId
+                _state.update { it.copy(localSourceChecks = false, checkingSources = false, checkedSourceKeys = emptySet(), availableSourceKeys = emptySet(), sourceCheckHasSnapshot = false, sourceCheckUpdateReady = false, sourceCheckStale = false, sourceCheckMessage = null, showAllSources = false) }
+                return@launch
+            }
+            val network = currentNetwork
+            val sites = document.usableSites.filter { it.type != 3 }.sortedBy { if (it.key == _state.value.currentSite?.key) 0 else 1 }
+            val ids = sites.map(SourceCheckCache::identity).toSet()
+            val runId = subscriptionId + "|" + network.key + "|" + ids.sorted().joinToString(",")
+            if (!force && runningCheckId == runId && sourceCheckJob?.isActive == true) return@launch
+            sourceCheckJob?.cancel(); sourceCheckJob = null; runningCheckId = null
+            val changedSubscription = snapshotSubscriptionId != subscriptionId
+            if (changedSubscription) {
+                displayedSnapshot = null; pendingSnapshot = null; snapshotSubscriptionId = subscriptionId
+                _state.update { it.copy(localSourceChecks = true, checkedSourceKeys = emptySet(), availableSourceKeys = emptySet(), sourceCheckHasSnapshot = false, sourceCheckUpdateReady = false, sourceCheckStale = false, sourceCheckMessage = null, showAllSources = false) }
+            } else _state.update { it.copy(localSourceChecks = true) }
+            val snapshots = withContext(Dispatchers.IO) { store.readSourceChecks(subscriptionId) }
+            if (_state.value.settings.activeSubscriptionId != subscriptionId || currentNetwork != network) return@launch
+            val exact = snapshots.firstOrNull { it.network == network.key && network.key.isNotBlank() }
+            val candidate = exact ?: snapshots.maxByOrNull { it.checkedAt }
+            if (displayedSnapshot == null && candidate != null) applySourceSnapshot(candidate, document)
+            else if (exact != null && displayedSnapshot?.network != exact.network) {
+                if (settingsVisible) { pendingSnapshot = exact; _state.update { it.copy(sourceCheckUpdateReady = true) } }
+                else applySourceSnapshot(exact, document)
+            }
+            val displayed = displayedSnapshot
+            _state.update { it.copy(sourceCheckStale = displayed != null && (displayed.network != network.key || !displayed.isFresh(System.currentTimeMillis()) || !displayed.entries.keys.containsAll(ids)), sourceCheckMessage = if (!network.online) if (displayed != null) "当前网络不可用，保留上次检测结果" else "当前网络不可用，暂时无法检测" else null) }
+            val fresh = exact?.isFresh(System.currentTimeMillis()) == true && exact.entries.keys.containsAll(ids)
+            if (!appForeground || !network.online || (!force && fresh) || sites.isEmpty()) {
+                _state.update { it.copy(checkingSources = false) }
+                return@launch
+            }
+            runningCheckId = runId
+            _state.update { it.copy(checkingSources = true, sourceCheckCompleted = 0, sourceCheckTotal = sites.size, sourceCheckMessage = null) }
+            sourceCheckJob = viewModelScope.launch {
+                val semaphore = Semaphore(6)
+                val results = coroutineScope {
+                    sites.map { site -> async {
+                        val ok = semaphore.withPermit {
+                            withContext(Dispatchers.IO) {
+                                try { VodApi.list(site, timeoutSeconds = 8).items.isNotEmpty() }
+                                catch (e: CancellationException) { throw e }
+                                catch (_: Exception) { false }
+                            }
+                        }
+                        _state.update { it.copy(sourceCheckCompleted = it.sourceCheckCompleted + 1) }
+                        SourceCheckCache.identity(site) to ok
+                    } }.awaitAll().toMap()
+                }
+                if (_state.value.settings.activeSubscriptionId != subscriptionId || currentNetwork != network || runningCheckId != runId) return@launch
+                runningCheckId = null
+                val noSuccess = results.values.none { it }
+                val previousAvailable = (exact ?: displayedSnapshot)?.entries?.values?.any { it.available } == true
+                if (!currentNetwork.online || (noSuccess && previousAvailable)) {
+                    _state.update { it.copy(checkingSources = false, sourceCheckStale = true, sourceCheckMessage = "本轮未检测到可用源，保留上次结果") }
+                    return@launch
+                }
+                val snapshot = SourceCheckCache.merge(exact, network.key, System.currentTimeMillis(), results)
+                withContext(Dispatchers.IO) { store.writeSourceChecks(subscriptionId, snapshot) }
+                if (_state.value.settings.activeSubscriptionId != subscriptionId || currentNetwork != network) return@launch
+                if (settingsVisible) {
+                    pendingSnapshot = snapshot
+                    _state.update { it.copy(checkingSources = false, sourceCheckUpdateReady = true, sourceCheckMessage = if (noSuccess) "本轮未检测到可用源，请检查网络或稍后重试" else null) }
+                } else {
+                    applySourceSnapshot(snapshot, _state.value.document ?: document)
+                    _state.update { it.copy(checkingSources = false, sourceCheckMessage = if (noSuccess) "本轮未检测到可用源，请检查网络或稍后重试" else null) }
+                }
+            }
+        }
+    }
+
+    private fun applySourceSnapshot(snapshot: SourceCheckSnapshot, document: SubscriptionDocument) {
+        displayedSnapshot = snapshot; pendingSnapshot = null
+        val spiderKeys = document.sites.filter { it.type == 3 }.map { it.key }.toSet()
+        val checked = document.usableSites.filter { site -> snapshot.entries[SourceCheckCache.identity(site)]?.let { it.available || it.failures >= 2 } == true }.map { it.key }.toSet()
+        val available = document.usableSites.filter { site -> snapshot.entries[SourceCheckCache.identity(site)]?.available == true }.map { it.key }.toSet()
+        val currentIds = document.usableSites.filter { it.type != 3 }.map(SourceCheckCache::identity)
+        _state.update { it.copy(checkedSourceKeys = checked + it.checkedSourceKeys.intersect(spiderKeys), availableSourceKeys = available + it.availableSourceKeys.intersect(spiderKeys), sourceCheckHasSnapshot = true, sourceCheckUpdateReady = false, sourceCheckStale = snapshot.network != currentNetwork.key || !snapshot.isFresh(System.currentTimeMillis()) || !snapshot.entries.keys.containsAll(currentIds), sourceCheckMessage = null) }
+    }
+
+    fun applySourceCheckUpdate() {
+        val snapshot = pendingSnapshot ?: return
+        if (snapshotSubscriptionId != _state.value.settings.activeSubscriptionId || snapshot.network != currentNetwork.key) {
+            pendingSnapshot = null
+            _state.update { it.copy(sourceCheckUpdateReady = false) }
+            return
+        }
+        _state.value.document?.let { applySourceSnapshot(snapshot, it) }
+    }
+
+    fun setSourceSettingsVisible(visible: Boolean) {
+        settingsVisible = visible
+        if (!visible) applySourceCheckUpdate()
+    }
+
+    fun showAllSources(show: Boolean) { _state.update { it.copy(showAllSources = show) } }
+
+    fun refreshSourceChecks() {
+        val state = _state.value
+        val active = state.subscriptions.firstOrNull { it.id == state.settings.activeSubscriptionId } ?: return
+        state.document?.let { startLocalSourceChecks(it, active.id, active.url, force = true) }
+    }
+
+    private fun scheduleNetworkUpdate() {
+        networkChangeJob?.cancel()
+        networkChangeJob = viewModelScope.launch {
+            delay(750)
+            val next = sourceNetwork(getApplication())
+            if (next == currentNetwork) return@launch
+            currentNetwork = next
+            sourceCheckJob?.cancel(); sourceCheckJob = null; runningCheckId = null
+            pendingSnapshot = null
+            _state.update { it.copy(checkingSources = false, sourceCheckUpdateReady = false, sourceCheckStale = it.sourceCheckHasSnapshot, sourceCheckMessage = if (next.online) null else if (it.sourceCheckHasSnapshot) "当前网络不可用，保留上次检测结果" else "当前网络不可用，暂时无法检测") }
+            if (appForeground) restartSourceChecks()
+        }
+    }
+
+    private fun restartSourceChecks() {
+        val state = _state.value
+        val active = state.subscriptions.firstOrNull { it.id == state.settings.activeSubscriptionId } ?: return
+        state.document?.let { startLocalSourceChecks(it, active.id, active.url) }
+    }
+
+    fun setAppForeground(foreground: Boolean) {
+        if (appForeground == foreground) return
+        appForeground = foreground
+        if (foreground) { currentNetwork = sourceNetwork(getApplication()); restartSourceChecks() }
+        else { sourceCheckPrepareJob?.cancel(); sourceCheckJob?.cancel(); sourceCheckJob = null; runningCheckId = null; _state.update { it.copy(checkingSources = false) } }
     }
 
     fun selectSite(site: Site) {
         store.currentSiteKey = site.key
         _state.update { it.copy(currentSite = site, settings = it.settings.copy(currentSiteKey = site.key)) }
+    }
+
+    /** Run the same initialization and homepage path used by the UI, after explicit approval. */
+    suspend fun selectSpider(site: Site): String? = withContext(Dispatchers.IO) {
+        val subscriptionId = _state.value.settings.activeSubscriptionId
+        val document = _state.value.document
+        val network = sourceNetwork(getApplication())
+        fun saveResult(available: Boolean) {
+            if (network.online && network.key.isNotBlank()) {
+                val checkedAt = if (document?.usableSites?.none { it.type != 3 } == true) System.currentTimeMillis() else 0
+                store.writeSourceChecks(subscriptionId, SourceCheckSnapshot(network.key, checkedAt, mapOf(SourceCheckCache.identity(site) to SourceCheckEntry(available, if (available) 0 else 2))))
+            }
+        }
+        try {
+            VodApi.list(site)
+            if (_state.value.settings.activeSubscriptionId != subscriptionId || _state.value.document !== document || sourceNetwork(getApplication()) != network) return@withContext "订阅或网络已改变，请重新选择源站"
+            saveResult(true)
+            _state.update { it.copy(checkedSourceKeys = it.checkedSourceKeys + site.key, availableSourceKeys = it.availableSourceKeys + site.key) }
+            selectSite(site)
+            null
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (sourceNetwork(getApplication()) == network) saveResult(false)
+            _state.update { it.copy(checkedSourceKeys = it.checkedSourceKeys + site.key, availableSourceKeys = it.availableSourceKeys - site.key) }
+            error.message ?: "源站检测失败"
+        }
     }
 
     fun togglePinnedSite(site: Site) {

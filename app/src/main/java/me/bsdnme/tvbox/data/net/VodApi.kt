@@ -29,6 +29,7 @@ import kotlinx.coroutines.coroutineScope
 object VodApi {
 
     fun categories(site: Site): List<Category> {
+        if (site.type == 3) return VodParser.parseList(SpiderRuntime.call(site, "home"), true).categories
         if (site.type == 4) return VodParser.parseList(Http.get(buildUrl(site.api, hashMapOf("filter" to "true", "extend" to site.ext))), true).categories
         val params = baseParams(site)
         params["ac"] = "list"
@@ -36,12 +37,21 @@ object VodApi {
         return VodParser.parseList(body, site.isJsonApi).categories
     }
 
-    fun list(site: Site, typeId: String = "", page: Int = 1): PagedMedia {
+    fun list(site: Site, typeId: String = "", page: Int = 1, timeoutSeconds: Long = 15): PagedMedia {
+        if (site.type == 3) {
+            if (typeId.isNotBlank()) return VodParser.parseList(SpiderRuntime.call(site, "category", typeId, page.toString()), true)
+            val home = VodParser.parseList(SpiderRuntime.call(site, "home"), true)
+            val video = VodParser.parseList(SpiderRuntime.call(site, "homeVideo"), true)
+            if (video.items.isNotEmpty()) return video.copy(categories = home.categories)
+            if (home.items.isNotEmpty()) return home
+            val first = home.categories.firstOrNull() ?: return home
+            return list(site, first.typeId, 1, timeoutSeconds).copy(categories = home.categories)
+        }
         if (site.type == 4) {
             val params = if (typeId.isBlank()) hashMapOf("filter" to "true", "extend" to site.ext) else hashMapOf("ac" to "detail", "filter" to "true", "t" to typeId, "pg" to page.toString(), "ext" to "")
-            val result = normalizeImages(site, VodParser.parseList(Http.get(buildUrl(site.api, params)), true))
+            val result = normalizeImages(site, VodParser.parseList(Http.get(buildUrl(site.api, params), timeoutSeconds = timeoutSeconds, readTimeoutSeconds = timeoutSeconds), true))
             if (typeId.isBlank() && result.items.isEmpty() && result.categories.isNotEmpty()) {
-                val first = list(site, result.categories.first().typeId, 1)
+                val first = list(site, result.categories.first().typeId, 1, timeoutSeconds)
                 return first.copy(categories = result.categories)
             }
             return result
@@ -50,7 +60,7 @@ object VodApi {
         params["ac"] = if (site.isJsonApi) "detail" else "videolist"
         params["pg"] = page.toString()
         if (typeId.isNotBlank()) params["t"] = typeId
-        val body = Http.get(buildUrl(site.api, params))
+        val body = Http.get(buildUrl(site.api, params), timeoutSeconds = timeoutSeconds, readTimeoutSeconds = timeoutSeconds)
         return normalizeImages(site, VodParser.parseList(body, site.isJsonApi))
     }
 
@@ -80,6 +90,7 @@ object VodApi {
     }
 
     fun search(site: Site, keyword: String, page: Int = 1): PagedMedia {
+        if (site.type == 3) return VodParser.parseList(SpiderRuntime.call(site, "search", keyword, page.toString()), true)
         if (site.type == 4) return normalizeImages(site, VodParser.parseList(Http.get(buildUrl(site.api, hashMapOf("ac" to "detail", "wd" to keyword, "quick" to "false", "pg" to page.toString()))), true))
         val params = baseParams(site)
         params["ac"] = if (site.isJsonApi) "detail" else "videolist"
@@ -90,6 +101,7 @@ object VodApi {
     }
 
     fun detail(site: Site, vodId: String): MediaDetail {
+        if (site.type == 3) return VodParser.parseDetail(SpiderRuntime.call(site, "detail", vodId), true, vodId)
         if (site.type == 4) return VodParser.parseDetail(Http.get(buildUrl(site.api, hashMapOf("ac" to "detail", "ids" to vodId, "extend" to site.ext))), true, vodId).let { it.copy(item = normalizeImage(site, it.item)) }
         var lastError: Throwable? = null
         for (action in listOf("videolist", "detail")) {
@@ -122,11 +134,13 @@ object VodApi {
     data class Playback(val url: String, val headers: Map<String, String>)
 
     fun resolvePlayback(site: Site, flag: String, id: String): Playback {
-        val body = Http.get(buildUrl(site.api, hashMapOf("play" to id, "flag" to flag, "extend" to site.ext)))
+        val body = if (site.type == 3) SpiderRuntime.call(site, "play", flag, id)
+            else Http.get(buildUrl(site.api, hashMapOf("play" to id, "flag" to flag, "extend" to site.ext)))
         val result = try { JSONObject(body) } catch (_: Exception) { throw SourceException("播放接口返回的不是有效 JSON") }
         val url = result.optString("url").trim()
         if (result.optInt("parse", 0) != 0 || result.optString("playUrl").isNotBlank()) throw SourceException("此线路需要额外的网页解析，当前版本暂不支持")
         if (!url.startsWith("https://") && !url.startsWith("http://")) throw SourceException("播放接口没有返回可用的视频地址")
+        if (site.type == 3 && url.toHttpUrlOrNull()?.host in listOf("127.0.0.1", "localhost", "::1")) throw SourceException("此线路需要 Spider 本地代理，当前版本暂不支持")
         val rawHeaders = result.opt("header")
         val headers = when (rawHeaders) {
             is JSONObject -> rawHeaders
